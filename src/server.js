@@ -21,7 +21,7 @@ app.use(helmet());
 
 // CORS configuration
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: process.env.CORS_ORIGIN || 'https://timetable-frontend-zzdb.vercel.app',
   credentials: true,
   optionsSuccessStatus: 200
 };
@@ -91,7 +91,7 @@ app.listen(PORT, () => {
 ║                                                       ║
 ║   Server running on port: ${PORT}                        ║
 ║   Environment: ${process.env.NODE_ENV || 'development'}                      ║
-║   CORS Origin: ${process.env.CORS_ORIGIN || 'http://localhost:3000'}        ║
+║   CORS Origin: ${process.env.CORS_ORIGIN || 'https://timetable-frontend-zzdb.vercel.app'}        ║
 ║                                                       ║
 ║   Health Check: http://localhost:${PORT}/health         ║
 ║   API Base URL: http://localhost:${PORT}/api            ║
