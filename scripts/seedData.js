@@ -4,13 +4,24 @@ const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
 require('dotenv').config();
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'university_schedule',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD,
-});
+const getPoolConfig = () => {
+  if (process.env.DATABASE_URL) {
+    return {
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    };
+  }
+  return {
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 5432,
+    database: process.env.DB_NAME || 'university_schedule',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD,
+    ssl: false
+  };
+};
+
+const pool = new Pool(getPoolConfig());
 
 const UNIVERSITY_GROUPS = [
   'COMSE-25', 'COMCEH-25', 'COMFCI-25', 'COMCEH-24',
@@ -24,108 +35,40 @@ const UNIVERSITY_GROUPS = [
 
 async function seedDatabase() {
   let client;
-  
   try {
     client = await pool.connect();
-    
-    console.log('🌱 Seeding database...\n');
+    console.log('ðŸŒ± Seeding database...\n');
 
-    // Check if admin user exists
-    const userCheck = await client.query(
-      `SELECT * FROM users WHERE username = 'admin'`
-    );
-
+    // Create admin user if not exists
+    const userCheck = await client.query(`SELECT * FROM users WHERE username = 'admin'`);
     if (userCheck.rows.length === 0) {
-      console.log('👤 Creating default admin user...');
+      console.log('ðŸ‘¤ Creating default admin user...');
       const hashedPassword = await bcrypt.hash('admin123', 10);
-      
       await client.query(
         `INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)`,
         ['admin', hashedPassword, 'admin']
       );
-      
-      console.log('✅ Admin user created');
+      console.log('âœ… Admin user created');
       console.log('   Username: admin');
       console.log('   Password: admin123');
-      console.log('   ⚠️  CHANGE THIS PASSWORD IN PRODUCTION!\n');
+      console.log('   âš ï¸  CHANGE THIS PASSWORD IN PRODUCTION!\n');
     } else {
-      console.log('✅ Admin user already exists\n');
+      console.log('âœ… Admin user already exists\n');
     }
 
     // Insert groups
-    console.log('📚 Inserting university groups...');
-    
+    console.log('ðŸ“š Inserting university groups...');
     for (const groupName of UNIVERSITY_GROUPS) {
       await client.query(
         `INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
         [groupName]
       );
     }
-    
-    console.log(`✅ ${UNIVERSITY_GROUPS.length} groups inserted\n`);
+    console.log(`âœ… ${UNIVERSITY_GROUPS.length} groups ready\n`);
 
-    // Optional: Add some sample schedules
-    console.log('📅 Adding sample schedules...');
-    
-    const sampleSchedules = [
-      {
-        group: 'COMSE-25',
-        day: 'Monday',
-        time: '08:00',
-        course: 'Data Structures',
-        teacher: 'Prof. Johnson',
-        room: 'Room 401'
-      },
-      {
-        group: 'COMSE-25',
-        day: 'Monday',
-        time: '09:30',
-        course: 'Algorithms',
-        teacher: 'Prof. Smith',
-        room: 'Room 305'
-      },
-      {
-        group: 'COMCEH-25',
-        day: 'Tuesday',
-        time: '08:00',
-        course: 'Computer Networks',
-        teacher: 'Prof. Williams',
-        room: 'Lab 201'
-      },
-      {
-        group: 'MATDAIS-25',
-        day: 'Wednesday',
-        time: '10:15',
-        course: 'Linear Algebra',
-        teacher: 'Prof. Davis',
-        room: 'Room 102'
-      },
-      {
-        group: 'EEAIR-25',
-        day: 'Thursday',
-        time: '14:00',
-        course: 'Circuit Theory',
-        teacher: 'Prof. Brown',
-        room: 'Lab 303'
-      }
-    ];
-
-    for (const schedule of sampleSchedules) {
-      await client.query(
-        `INSERT INTO schedules (group_name, day, time, course, teacher, room) 
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (group_name, day, time) DO NOTHING`,
-        [schedule.group, schedule.day, schedule.time, schedule.course, schedule.teacher, schedule.room]
-      );
-    }
-    
-    console.log(`✅ ${sampleSchedules.length} sample schedules added\n`);
-
-    console.log('✅ Database seeding complete!\n');
-    console.log('📌 You can now start the server with: npm start\n');
-
+    console.log('âœ… Database seeding complete!\n');
   } catch (error) {
-    console.error('❌ Error seeding database:', error.message);
+    console.error('âŒ Error seeding database:', error.message);
     throw error;
   } finally {
     if (client) client.release();
@@ -133,10 +76,6 @@ async function seedDatabase() {
   }
 }
 
-// Run seeding
 seedDatabase()
   .then(() => process.exit(0))
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  .catch(() => process.exit(1));
