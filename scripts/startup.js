@@ -81,7 +81,8 @@ async function setup() {
     // Create admin user
     const userExists = await client.query(`SELECT id FROM users WHERE username = 'admin'`);
     if (userExists.rows.length === 0) {
-      const hash = await bcrypt.hash('admin123', 10);
+       const password = process.env.ADMIN_PASSWORD || 'admin123';  // ← ADD THIS
+       const hash = await bcrypt.hash(password, 10);  
       await client.query(
         `INSERT INTO users (username, password_hash, role) VALUES ('admin', $1, 'admin')`,
         [hash]
