@@ -1,82 +1,99 @@
-// src/controllers/groupController.js
+// src/controllers/scheduleController.js
 
-const Group = require('../models/Group');
 const Schedule = require('../models/Schedule');
+const Group = require('../models/Group');
 
-class GroupController {
+class ScheduleController {
   static async getAll(req, res) {
     try {
-      const groups = await Group.getAll();
-      res.json(groups);
+      res.json(await Schedule.getAll());
     } catch (error) {
-      console.error('Get all groups error:', error);
-      res.status(500).json({ 
-        success: false,
-        error: 'Server error fetching groups' 
-      });
+      console.error('Get all schedules error:', error);
+      res.status(500).json({ success: false, error: 'Server error fetching schedules' });
     }
   }
 
-  static async create(req, res) {
+  static async createOrUpdate(req, res) {
     try {
-      const { name } = req.body;
+      const { group, day, time, course, teacher, room, subjectType } = req.body;
 
-      // Check if group already exists
-      const exists = await Group.exists(name);
-      if (exists) {
-        return res.status(400).json({ 
-          success: false,
-          error: 'Group already exists' 
-        });
+      // Auto-create group if it doesn't exist yet
+      const groupExists = await Group.exists(group);
+      if (!groupExists) {
+        await Group.create(group);
       }
 
-      const group = await Group.create(name);
+      const schedule = await Schedule.upsert(
+        group, day, time, course,
+        teacher || null,
+        room || null,
+        subjectType || 'lecture'
+      );
 
-      res.status(201).json({
+      res.json({
         success: true,
         data: {
-          id: group.id,
-          name: group.name
+          id: schedule.id,
+          group: schedule.group_name,
+          day: schedule.day,
+          time: schedule.time,
+          course: schedule.course,
+          teacher: schedule.teacher,
+          room: schedule.room,
+          subjectType: schedule.subject_type,
         }
       });
     } catch (error) {
-      console.error('Create group error:', error);
-      res.status(500).json({ 
-        success: false,
-        error: 'Server error creating group' 
-      });
+      console.error('Create/Update schedule error:', error);
+      res.status(500).json({ success: false, error: 'Server error saving schedule' });
     }
   }
 
   static async delete(req, res) {
     try {
-      const { name } = req.params;
-
-      // Delete all schedules for this group first
-      await Schedule.deleteByGroup(name);
-
-      // Delete the group
-      const deleted = await Group.delete(name);
-      
+      const { group, day, time } = req.params;
+      const deleted = await Schedule.delete(group, day, time);
       if (!deleted) {
-        return res.status(404).json({ 
-          success: false,
-          error: 'Group not found' 
-        });
+        return res.status(404).json({ success: false, error: 'Schedule entry not found' });
       }
-
-      res.json({ 
-        success: true,
-        message: 'Group and associated schedules deleted successfully' 
-      });
+      res.json({ success: true, message: 'Deleted successfully' });
     } catch (error) {
-      console.error('Delete group error:', error);
-      res.status(500).json({ 
-        success: false,
-        error: 'Server error deleting group' 
-      });
+      console.error('Delete schedule error:', error);
+      res.status(500).json({ success: false, error: 'Server error deleting schedule' });
+    }
+  }
+
+  static async getByDay(req, res) {
+    try {
+      res.json(await Schedule.getByDay(req.params.day));
+    } catch (error) {
+      res.status(500).json({ success: false, error: 'Server error' });
+    }
+  }
+
+  static async getByTeacher(req, res) {
+    try {
+      res.json(await Schedule.getByTeacher(req.params.teacher));
+    } catch (error) {
+      res.status(500).json({ success: false, error: 'Server error' });
+    }
+  }
+
+  static async getByGroup(req, res) {
+    try {
+      res.json(await Schedule.getByGroup(req.params.group));
+    } catch (error) {
+      res.status(500).json({ success: false, error: 'Server error' });
+    }
+  }
+
+  static async getAllTeachers(req, res) {
+    try {
+      res.json(await Schedule.getAllTeachers());
+    } catch (error) {
+      res.status(500).json({ success: false, error: 'Server error' });
     }
   }
 }
 
-module.exports = GroupController;
+module.exports = ScheduleController;

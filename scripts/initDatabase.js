@@ -3,56 +3,29 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: 'postgres', // Connect to default database first
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD,
-});
+const getPoolConfig = () => {
+  if (process.env.DATABASE_URL) {
+    return { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } };
+  }
+  return {
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 5432,
+    database: process.env.DB_NAME || 'university_schedule',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  };
+};
 
-const DB_NAME = process.env.DB_NAME || 'university_schedule';
+const pool = new Pool(getPoolConfig());
 
 async function initDatabase() {
   let client;
-  
   try {
     client = await pool.connect();
-    
-    console.log('🔧 Initializing database...\n');
+    console.log('ðŸ”§ Initializing database...\n');
 
-    // Check if database exists
-    const dbCheck = await client.query(
-      `SELECT 1 FROM pg_database WHERE datname = $1`,
-      [DB_NAME]
-    );
-
-    if (dbCheck.rows.length === 0) {
-      console.log(`📦 Creating database "${DB_NAME}"...`);
-      await client.query(`CREATE DATABASE ${DB_NAME}`);
-      console.log('✅ Database created successfully\n');
-    } else {
-      console.log(`✅ Database "${DB_NAME}" already exists\n`);
-    }
-
-    client.release();
-
-    // Connect to the new database
-    const appPool = new Pool({
-      host: process.env.DB_HOST || 'localhost',
-      port: process.env.DB_PORT || 5432,
-      database: DB_NAME,
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD,
-    });
-
-    const appClient = await appPool.connect();
-
-    // Create tables
-    console.log('📋 Creating tables...\n');
-
-    // Users table
-    await appClient.query(`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(50) UNIQUE NOT NULL,
@@ -62,74 +35,57 @@ async function initDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('✅ Users table created');
+    console.log('âœ… Users table ready');
 
-    // Groups table
-    await appClient.query(`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS groups (
         id SERIAL PRIMARY KEY,
         name VARCHAR(50) UNIQUE NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('✅ Groups table created');
+    console.log('âœ… Groups table ready');
 
-    // Schedules table
-    await appClient.query(`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS schedules (
         id SERIAL PRIMARY KEY,
         group_name VARCHAR(50) NOT NULL,
-        day VARCHAR(20) NOT NULL CHECK (day IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')),
+        day VARCHAR(20) NOT NULL CHECK (day IN ('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday')),
         time VARCHAR(10) NOT NULL,
         course VARCHAR(100) NOT NULL,
         teacher VARCHAR(100),
         room VARCHAR(50),
+        subject_type VARCHAR(20) DEFAULT 'lecture',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(group_name, day, time),
         FOREIGN KEY (group_name) REFERENCES groups(name) ON DELETE CASCADE
       )
     `);
-    console.log('✅ Schedules table created');
+    console.log('âœ… Schedules table ready');
 
-    // Create indexes
-    console.log('\n📊 Creating indexes...\n');
-    
-    await appClient.query(`
-      CREATE INDEX IF NOT EXISTS idx_schedules_day ON schedules(day)
+    // Add subject_type column if upgrading an existing database that doesn't have it
+    await client.query(`
+      ALTER TABLE schedules
+        ADD COLUMN IF NOT EXISTS subject_type VARCHAR(20) DEFAULT 'lecture'
     `);
-    console.log('✅ Index on schedules.day created');
+    console.log('âœ… subject_type column ready');
 
-    await appClient.query(`
-      CREATE INDEX IF NOT EXISTS idx_schedules_teacher ON schedules(teacher)
-    `);
-    console.log('✅ Index on schedules.teacher created');
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_schedules_day     ON schedules(day)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_schedules_teacher ON schedules(teacher)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_schedules_group   ON schedules(group_name)`);
+    console.log('âœ… Indexes ready');
 
-    await appClient.query(`
-      CREATE INDEX IF NOT EXISTS idx_schedules_group ON schedules(group_name)
-    `);
-    console.log('✅ Index on schedules.group_name created');
-
-    appClient.release();
-    await appPool.end();
-
-    console.log('\n✅ Database initialization complete!\n');
-    console.log('📌 Next steps:');
-    console.log('   1. Run: npm run seed (to add initial data)');
-    console.log('   2. Run: npm start (to start the server)\n');
-
+    console.log('\nâœ… Database initialization complete!\n');
   } catch (error) {
-    console.error('❌ Error initializing database:', error.message);
+    console.error('âŒ Error initializing database:', error.message);
     throw error;
   } finally {
+    if (client) client.release();
     await pool.end();
   }
 }
 
-// Run initialization
 initDatabase()
   .then(() => process.exit(0))
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  .catch(() => process.exit(1));

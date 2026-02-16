@@ -6,10 +6,10 @@ require('dotenv').config();
 
 const getConfig = () => {
   if (process.env.DATABASE_URL) {
-    console.log('📡 Using DATABASE_URL');
+    console.log('ðŸ“¡ Using DATABASE_URL');
     return { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } };
   }
-  console.log('📡 Using individual DB variables');
+  console.log('ðŸ“¡ Using individual DB variables');
   return {
     host: process.env.DB_HOST,
     port: process.env.DB_PORT || 5432,
@@ -34,7 +34,7 @@ async function setup() {
 
   try {
     client = await pool.connect();
-    console.log('✅ Database connected!');
+    console.log('âœ… Database connected!');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -62,6 +62,7 @@ async function setup() {
         course VARCHAR(100) NOT NULL,
         teacher VARCHAR(100),
         room VARCHAR(50),
+        subject_type VARCHAR(20) DEFAULT 'lecture',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(group_name, day, time),
@@ -71,7 +72,11 @@ async function setup() {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_day ON schedules(day)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher ON schedules(teacher)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_group ON schedules(group_name)`);
-    console.log('✅ Tables and indexes ready!');
+    console.log('âœ… Tables and indexes ready!');
+
+    // Migrate existing DB: add subject_type if missing
+    await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(20) DEFAULT 'lecture'`);
+    console.log('âœ… subject_type migration done');
 
     // Create admin user
     const userExists = await client.query(`SELECT id FROM users WHERE username = 'admin'`);
@@ -81,9 +86,9 @@ async function setup() {
         `INSERT INTO users (username, password_hash, role) VALUES ('admin', $1, 'admin')`,
         [hash]
       );
-      console.log('✅ Admin user created - login: admin / admin123');
+      console.log('âœ… Admin user created - login: admin / admin123');
     } else {
-      console.log('✅ Admin user already exists');
+      console.log('âœ… Admin user already exists');
     }
 
     // Seed groups
@@ -93,17 +98,17 @@ async function setup() {
         [name]
       );
     }
-    console.log(`✅ ${GROUPS.length} groups ready!`);
+    console.log(`âœ… ${GROUPS.length} groups ready!`);
 
   } catch (err) {
-    console.error('❌ Setup failed:', err.message);
+    console.error('âŒ Setup failed:', err.message);
     process.exit(1);
   } finally {
     if (client) client.release();
     await pool.end();
   }
 
-  console.log('\n🚀 Starting Express server...\n');
+  console.log('\nðŸš€ Starting Express server...\n');
   require(path.join(__dirname, '../src/server'));
 }
 
