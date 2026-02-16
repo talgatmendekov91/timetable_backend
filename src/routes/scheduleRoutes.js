@@ -1,37 +1,31 @@
 // src/routes/scheduleRoutes.js
-
 const express = require('express');
-const { body, param } = require('express-validator');
 const ScheduleController = require('../controllers/scheduleController');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const { validate } = require('../middleware/validation');
 
 const router = express.Router();
 
-// Validation rules
-const scheduleValidation = [
-  body('group').trim().notEmpty().withMessage('Group is required'),
-  body('day')
-    .trim()
-    .notEmpty()
-    .withMessage('Day is required')
-    .isIn(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'])
-    .withMessage('Invalid day'),
-  body('time').trim().notEmpty().withMessage('Time is required'),
-  body('course').trim().notEmpty().withMessage('Course is required'),
-  body('teacher').optional().trim(),
-  body('room').optional().trim()
-];
+const VALID_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
-// Public routes (anyone can view)
-router.get('/', ScheduleController.getAll);
-router.get('/day/:day', ScheduleController.getByDay);
-router.get('/teacher/:teacher', ScheduleController.getByTeacher);
-router.get('/group/:group', ScheduleController.getByGroup);
-router.get('/teachers', ScheduleController.getAllTeachers);
+// Manual validation middleware
+const validateSchedule = (req, res, next) => {
+  const { group, day, time, course } = req.body;
+  if (!group || !group.trim()) return res.status(400).json({ success: false, error: 'Group is required' });
+  if (!day || !VALID_DAYS.includes(day)) return res.status(400).json({ success: false, error: 'Valid day is required' });
+  if (!time || !time.trim()) return res.status(400).json({ success: false, error: 'Time is required' });
+  if (!course || !course.trim()) return res.status(400).json({ success: false, error: 'Course is required' });
+  next();
+};
 
-// Protected routes (admin only)
-router.post('/', authenticateToken, requireAdmin, scheduleValidation, validate, ScheduleController.createOrUpdate);
-router.delete('/:group/:day/:time', authenticateToken, requireAdmin, ScheduleController.delete);
+// Public routes
+router.get('/',                    ScheduleController.getAll);
+router.get('/day/:day',            ScheduleController.getByDay);
+router.get('/teacher/:teacher',    ScheduleController.getByTeacher);
+router.get('/group/:group',        ScheduleController.getByGroup);
+router.get('/teachers',            ScheduleController.getAllTeachers);
+
+// Admin only
+router.post('/',                          authenticateToken, requireAdmin, validateSchedule, ScheduleController.createOrUpdate);
+router.delete('/:group/:day/:time',       authenticateToken, requireAdmin, ScheduleController.delete);
 
 module.exports = router;
