@@ -20,13 +20,10 @@ const PORT = process.env.PORT || 3001;
 app.use(helmet());
 
 // CORS configuration
-const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'https://timetable-frontend-zzdb.vercel.app',
-  credentials: true,
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOptions));
-
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 // Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
