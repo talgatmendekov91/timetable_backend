@@ -5,6 +5,7 @@ const router = express.Router();
 
 const VALID_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
+// GET all schedules as key-value map
 router.get('/', async function(req, res) {
   try {
     var result = await pool.query('SELECT * FROM schedules ORDER BY group_name, day, time');
@@ -19,7 +20,8 @@ router.get('/', async function(req, res) {
         course: row.course,
         teacher: row.teacher || '',
         room: row.room || '',
-        subjectType: row.subject_type || 'lecture'
+        subjectType: row.subject_type || 'lecture',
+        duration: row.duration || 1
       };
     });
     res.json(map);
@@ -54,27 +56,31 @@ router.get('/group/:group', async function(req, res) {
   } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// POST save/update a class
 router.post('/', authenticateToken, requireAdmin, async function(req, res) {
   try {
     var group = req.body.group, day = req.body.day, time = req.body.time;
     var course = req.body.course, teacher = req.body.teacher || null;
     var room = req.body.room || null, subjectType = req.body.subjectType || 'lecture';
+    var duration = parseInt(req.body.duration) || 1;
     if (!group || !day || !time || !course) {
       return res.status(400).json({ success: false, error: 'group, day, time and course are required' });
     }
     if (!VALID_DAYS.includes(day)) {
       return res.status(400).json({ success: false, error: 'Invalid day' });
     }
+    // Auto-create group if missing
     await pool.query('INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [group]);
     var result = await pool.query(
-      'INSERT INTO schedules (group_name, day, time, course, teacher, room, subject_type) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (group_name, day, time) DO UPDATE SET course=$4, teacher=$5, room=$6, subject_type=$7, updated_at=CURRENT_TIMESTAMP RETURNING *',
-      [group, day, time, course, teacher, room, subjectType]
+      'INSERT INTO schedules (group_name, day, time, course, teacher, room, subject_type, duration) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (group_name, day, time) DO UPDATE SET course=$4, teacher=$5, room=$6, subject_type=$7, duration=$8, updated_at=CURRENT_TIMESTAMP RETURNING *',
+      [group, day, time, course, teacher, room, subjectType, duration]
     );
     var row = result.rows[0];
-    res.json({ success: true, data: { id: row.id, group: row.group_name, day: row.day, time: row.time, course: row.course, teacher: row.teacher, room: row.room, subjectType: row.subject_type } });
+    res.json({ success: true, data: { id: row.id, group: row.group_name, day: row.day, time: row.time, course: row.course, teacher: row.teacher, room: row.room, subjectType: row.subject_type, duration: row.duration } });
   } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// DELETE a class
 router.delete('/:group/:day/:time', authenticateToken, requireAdmin, async function(req, res) {
   try {
     var result = await pool.query(

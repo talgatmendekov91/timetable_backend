@@ -63,6 +63,7 @@ async function setup() {
         teacher VARCHAR(100),
         room VARCHAR(50),
         subject_type VARCHAR(20) DEFAULT 'lecture',
+        duration INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(group_name, day, time),
@@ -74,15 +75,15 @@ async function setup() {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_group ON schedules(group_name)`);
     console.log('âœ… Tables and indexes ready!');
 
-    // Migrate existing DB: add subject_type if missing
+    // Migrate existing DB: add subject_type and duration if missing
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(20) DEFAULT 'lecture'`);
-    console.log('âœ… subject_type migration done');
+    await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 1`);
+    console.log('âœ… subject_type and duration migration done');
 
     // Create admin user
     const userExists = await client.query(`SELECT id FROM users WHERE username = 'admin'`);
     if (userExists.rows.length === 0) {
-       const password = process.env.ADMIN_PASSWORD || 'admin123';  // ← ADD THIS
-       const hash = await bcrypt.hash(password, 10);  
+      const hash = await bcrypt.hash('admin123', 10);
       await client.query(
         `INSERT INTO users (username, password_hash, role) VALUES ('admin', $1, 'admin')`,
         [hash]
