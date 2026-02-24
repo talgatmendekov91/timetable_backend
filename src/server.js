@@ -1,5 +1,3 @@
-// src/server.js
-
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -12,103 +10,63 @@ const authRoutes = require('./routes/authRoutes');
 const scheduleRoutes = require('./routes/scheduleRoutes');
 const groupRoutes = require('./routes/groupRoutes');
 
-// Initialize express app
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Security middleware
+// Security
 app.use(helmet());
 
-// CORS configuration
+// CORS
 const corsOptions = {
   origin: process.env.CORS_ORIGIN || 'https://your-vercel-app.vercel.app',
   credentials: true,
 };
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // ✅ OPTIONS для всех маршрутов
 
-// ✅ Обработка Preflight OPTIONS для всех маршрутов
-app.options('*', cors(corsOptions));
-
-// Rate limiting
+// Rate limit
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
+  message: 'Too many requests, try later',
   standardHeaders: true,
   legacyHeaders: false,
 });
 app.use('/api/', limiter);
 
-// Body parser middleware
+// Body parser
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Logging middleware
-if (process.env.NODE_ENV === 'development') {
-  app.use(morgan('dev'));
-} else {
-  app.use(morgan('combined'));
-}
+// Logging
+app.use(morgan('dev'));
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
+// Health check
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/groups', groupRoutes);
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ 
-    success: false,
-    error: 'Route not found' 
-  });
-});
+// 404
+app.use((req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
 
-// Error handling middleware
+// Error handling
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  
+  console.error(err);
   res.status(err.status || 500).json({
     success: false,
-    error: process.env.NODE_ENV === 'development' 
-      ? err.message 
-      : 'Internal server error'
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error',
   });
 });
 
-// Start server
 const server = app.listen(PORT, () => {
-  console.log(`
-╔═══════════════════════════════════════════════════════╗
-║                                                       ║
-║   🎓 University Schedule Backend API                 ║
-║                                                       ║
-║   Server running on port: ${PORT}                        ║
-║   Environment: ${process.env.NODE_ENV || 'development'}                      ║
-║   CORS Origin: ${process.env.CORS_ORIGIN || 'https://your-vercel-app.vercel.app'}        ║
-║                                                       ║
-║   Health Check: http://localhost:${PORT}/health         ║
-║   API Base URL: http://localhost:${PORT}/api            ║
-║                                                       ║
-╚═══════════════════════════════════════════════════════╝
-  `);
+  console.log(`Server running on port ${PORT}`);
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
-    process.exit(0);
-  });
+  server.close(() => process.exit(0));
 });
 
 module.exports = app;
