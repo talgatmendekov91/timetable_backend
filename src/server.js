@@ -1,5 +1,4 @@
 // src/server.js
-
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -22,21 +21,28 @@ app.use(helmet());
 // CORS configuration
 app.use(cors({
   origin: true,
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
-// Rate limiting
+
+// Handle OPTIONS requests explicitly
+app.options('*', cors());
+
+// Body parser middleware (BEFORE rate limiter)
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Rate limiting (AFTER body parser)
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS' // Skip rate limit for preflight
 });
 app.use('/api/', limiter);
-
-// Body parser middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 // Logging middleware
 if (process.env.NODE_ENV === 'development') {
@@ -70,7 +76,6 @@ app.use((req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  
   res.status(err.status || 500).json({
     success: false,
     error: process.env.NODE_ENV === 'development' 
@@ -88,7 +93,7 @@ app.listen(PORT, () => {
 ║                                                       ║
 ║   Server running on port: ${PORT}                        ║
 ║   Environment: ${process.env.NODE_ENV || 'development'}                      ║
-║   CORS Origin: ${process.env.CORS_ORIGIN || 'https://timetable-frontend-zzdb.vercel.app'}        ║
+║   CORS: Enabled (all origins)                        ║
 ║                                                       ║
 ║   Health Check: http://localhost:${PORT}/health         ║
 ║   API Base URL: http://localhost:${PORT}/api            ║
@@ -100,10 +105,7 @@ app.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
-    process.exit(0);
-  });
+  process.exit(0);
 });
 
 module.exports = app;
