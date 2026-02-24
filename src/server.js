@@ -5,15 +5,14 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
 require('dotenv').config();
-const bookingRoutes = require('./routes/bookingRoutes');
-app.use('/api/booking-requests', bookingRoutes);
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const scheduleRoutes = require('./routes/scheduleRoutes');
 const groupRoutes = require('./routes/groupRoutes');
+const bookingRoutes = require('./routes/bookingRoutes'); // Moved this down with other routes
 
-// Initialize express app
+// Initialize express app (THIS MUST COME BEFORE USING app)
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -62,12 +61,11 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API routes
+// API routes (ALL routes go here, AFTER app is initialized)
 app.use('/api/auth', authRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/groups', groupRoutes);
-
-
+app.use('/api/booking-requests', bookingRoutes); // Moved here with other routes
 
 // 404 handler
 app.use((req, res) => {
