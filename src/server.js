@@ -5,6 +5,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
 require('dotenv').config();
+const bookingRoutes = require('./routes/bookingRoutes');
+app.use('/api/booking-requests', bookingRoutes);
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
@@ -53,8 +55,8 @@ if (process.env.NODE_ENV === 'development') {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development'
   });
@@ -65,11 +67,14 @@ app.use('/api/auth', authRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/groups', groupRoutes);
 
+const bookingRoutes = require('./routes/bookingRoutes');
+app.use('/api/booking-requests', bookingRoutes);
+
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ 
+  res.status(404).json({
     success: false,
-    error: 'Route not found' 
+    error: 'Route not found'
   });
 });
 
@@ -78,8 +83,8 @@ app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({
     success: false,
-    error: process.env.NODE_ENV === 'development' 
-      ? err.message 
+    error: process.env.NODE_ENV === 'development'
+      ? err.message
       : 'Internal server error'
   });
 });

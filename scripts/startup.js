@@ -1,7 +1,9 @@
-// scripts/startup.js - WITH FULL ERROR LOGGING
+// scripts/startup.js - WITH FULL ERROR LOGGING AND SEPARATE MIGRATION FILE
 require('dotenv').config();
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
+const fs = require('fs');
+const path = require('path');
 
 const getPoolConfig = () => {
   if (process.env.DATABASE_URL) {
@@ -19,6 +21,26 @@ const getPoolConfig = () => {
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD,
   };
+};
+
+const runMigrationFile = async (client, filename) => {
+  try {
+    console.log(`📦 Running migration: ${filename}`);
+    const filePath = path.join(__dirname, filename);
+    
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      console.warn(`⚠️ Migration file not found: ${filename}, skipping...`);
+      return;
+    }
+    
+    const migrationSQL = fs.readFileSync(filePath, 'utf8');
+    await client.query(migrationSQL);
+    console.log(`✅ Migration completed: ${filename}`);
+  } catch (error) {
+    console.error(`❌ Migration failed for ${filename}:`, error.message);
+    throw error;
+  }
 };
 
 const setupDatabase = async () => {
@@ -55,15 +77,16 @@ const setupDatabase = async () => {
         FOREIGN KEY (group_name) REFERENCES groups(name) ON DELETE CASCADE
       )`);
 
+    // Create indexes for schedules
     await client.query(`CREATE INDEX IF NOT EXISTS idx_day ON schedules(day)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher ON schedules(teacher)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_group ON schedules(group_name)`);
-    console.log('✅ Tables and indexes ready!');
-
-    // Migrations
+    
+    // Add columns if they don't exist (migrations)
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(20) DEFAULT 'lecture'`);
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 1`);
-    console.log('✅ Migrations done');
+    
+    console.log('✅ Schedules table and indexes ready!');
 
     // Create users table
     await client.query(`
@@ -76,26 +99,9 @@ const setupDatabase = async () => {
       )`);
     console.log('✅ Users table ready!');
 
-    // Create booking_requests table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS booking_requests (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) NOT NULL,
-        phone VARCHAR(50),
-        room VARCHAR(50) NOT NULL,
-        day VARCHAR(20) NOT NULL,
-        start_time VARCHAR(10) NOT NULL,
-        duration INTEGER DEFAULT 1,
-        purpose TEXT NOT NULL,
-        status VARCHAR(20) DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )`);
-    
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_booking_status ON booking_requests(status)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_booking_created ON booking_requests(created_at DESC)`);
-    console.log('✅ Booking requests table ready!');
+    // RUN THE SEPARATE MIGRATION FILE FOR BOOKING_REQUESTS
+    // This will create the booking_requests table and its indexes
+    await runMigrationFile(client, 'booking-migration.sql');
 
     // Create admin user
     const adminCheck = await client.query("SELECT * FROM users WHERE username = 'admin'");
