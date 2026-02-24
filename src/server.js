@@ -67,8 +67,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/groups', groupRoutes);
 
-const bookingRoutes = require('./routes/bookingRoutes');
-app.use('/api/booking-requests', bookingRoutes);
+
 
 // 404 handler
 app.use((req, res) => {
