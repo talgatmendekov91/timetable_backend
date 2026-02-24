@@ -20,10 +20,15 @@ const PORT = process.env.PORT || 3001;
 app.use(helmet());
 
 // CORS configuration
-app.use(cors({
-  origin: true,
-  credentials: true
-}));
+const corsOptions = {
+  origin: process.env.CORS_ORIGIN || 'https://your-vercel-app.vercel.app',
+  credentials: true,
+};
+app.use(cors(corsOptions));
+
+// ✅ Обработка Preflight OPTIONS для всех маршрутов
+app.options('*', cors(corsOptions));
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
@@ -80,7 +85,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════╗
 ║                                                       ║
@@ -88,7 +93,7 @@ app.listen(PORT, () => {
 ║                                                       ║
 ║   Server running on port: ${PORT}                        ║
 ║   Environment: ${process.env.NODE_ENV || 'development'}                      ║
-║   CORS Origin: ${process.env.CORS_ORIGIN || 'https://timetable-frontend-zzdb.vercel.app'}        ║
+║   CORS Origin: ${process.env.CORS_ORIGIN || 'https://your-vercel-app.vercel.app'}        ║
 ║                                                       ║
 ║   Health Check: http://localhost:${PORT}/health         ║
 ║   API Base URL: http://localhost:${PORT}/api            ║
