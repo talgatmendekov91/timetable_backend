@@ -1,4 +1,5 @@
 // scripts/initDatabase.js
+// This script initializes the PostgreSQL database by creating the necessary tables and indexes.
 
 const { Pool } = require('pg');
 require('dotenv').config();
