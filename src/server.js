@@ -1,4 +1,3 @@
-// src/server.js
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -13,11 +12,12 @@ const groupRoutes = require('./routes/groupRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
 const teacherRoutes = require('./routes/teacherRoutes');
 
-// Import Telegram with error handling
+// Import Telegram service
 let startTelegramNotifications = null;
 try {
   const telegram = require('./services/telegramCron');
   startTelegramNotifications = telegram.startTelegramNotifications;
+  console.log('📦 Telegram module loaded successfully');
 } catch (error) {
   console.error('⚠️ Could not load Telegram modules:', error.message);
 }
@@ -25,6 +25,9 @@ try {
 // Initialize express app
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Trust proxy - important for rate limiting behind reverse proxy
+app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet());
@@ -40,18 +43,21 @@ app.use(cors({
 // Handle OPTIONS requests explicitly
 app.options('*', cors());
 
-// Body parser middleware (BEFORE rate limiter)
+// Body parser middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting (AFTER body parser)
+// Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.method === 'OPTIONS'
+  skip: (req) => req.method === 'OPTIONS',
+  keyGenerator: (req) => {
+    return req.headers['x-forwarded-for'] || req.ip;
+  }
 });
 app.use('/api/', limiter);
 
@@ -67,7 +73,8 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    telegram: !!process.env.TELEGRAM_BOT_TOKEN ? 'configured' : 'not configured'
   });
 });
 
@@ -98,7 +105,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════╗
 ║                                                       ║
@@ -107,6 +114,7 @@ app.listen(PORT, () => {
 ║   Server running on port: ${PORT}                        ║
 ║   Environment: ${process.env.NODE_ENV || 'development'}                      ║
 ║   CORS: Enabled (all origins)                        ║
+║   Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? '✅ Configured' : '❌ Not configured'}                ║
 ║                                                       ║
 ║   Health Check: http://localhost:${PORT}/health         ║
 ║   API Base URL: http://localhost:${PORT}/api            ║
@@ -114,28 +122,28 @@ app.listen(PORT, () => {
 ╚═══════════════════════════════════════════════════════╝
   `);
   
-  // Start Telegram notifications with full error handling
+  // Start Telegram notifications
   if (startTelegramNotifications) {
-    try {
-      console.log('🔄 Attempting to start Telegram bot...');
-      startTelegramNotifications();
-      console.log('✅ Telegram notifications started successfully');
-    } catch (error) {
-      console.error('❌ Failed to start Telegram bot:');
-      console.error('Error name:', error.name);
-      console.error('Error message:', error.message);
-      console.error('Stack trace:', error.stack);
-      console.log('⚠️ Server continuing without Telegram notifications');
-    }
+    console.log('🔄 Initializing Telegram service...');
+    setTimeout(() => {
+      try {
+        startTelegramNotifications();
+      } catch (error) {
+        console.error('❌ Failed to start Telegram service:', error);
+      }
+    }, 1000); // Small delay to ensure server is fully ready
   } else {
-    console.log('⚠️ Telegram modules not loaded. Skipping Telegram notifications.');
+    console.log('⚠️ Telegram service not available');
   }
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
-  process.exit(0);
+  server.close(() => {
+    console.log('HTTP server closed');
+    process.exit(0);
+  });
 });
 
 module.exports = app;
