@@ -114,4 +114,4 @@ async function importTeachersFromSchedules() {
 }
 
 // Запускаем функцию
-importTeachersFromSchedules();
+importTeachersFromSchedules()

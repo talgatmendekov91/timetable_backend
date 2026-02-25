@@ -100,7 +100,7 @@ const setupDatabase = async () => {
 
     // Run booking migration
     await runMigrationFile(client, 'booking-migration.sql');
-    
+
     // Create teachers table
     await client.query(`
       CREATE TABLE IF NOT EXISTS teachers (
@@ -114,6 +114,23 @@ const setupDatabase = async () => {
       CREATE INDEX IF NOT EXISTS idx_teacher_telegram ON teachers(telegram_id);
       CREATE INDEX IF NOT EXISTS idx_teacher_name ON teachers(LOWER(name));
     `);
+    console.log('✅ Teachers table ready!');
+
+    // В scripts/startup.js, после создания других таблиц, добавьте:
+
+    // Create teachers table
+    await client.query(`
+  CREATE TABLE IF NOT EXISTS teachers (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    telegram_id VARCHAR(50),
+    notifications_enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_teacher_telegram ON teachers(telegram_id);
+  CREATE INDEX IF NOT EXISTS idx_teacher_name ON teachers(LOWER(name));
+`);
     console.log('✅ Teachers table ready!');
 
     // Create admin user
@@ -150,11 +167,11 @@ const setupDatabase = async () => {
     console.log(`✅ ${groups.length} groups ready!`);
 
     console.log('🚀 Starting Express server...');
-    
+
     // IMPORTANT: Import the server but DON'T release the client yet
     // The server needs the pool to be available
     const app = require('../src/server');
-    
+
     console.log('✅ Server started successfully!');
     console.log('🤖 Telegram bot should now be initializing...');
 
