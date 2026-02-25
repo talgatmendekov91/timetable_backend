@@ -133,6 +133,22 @@ const setupDatabase = async () => {
 `);
     console.log('✅ Teachers table ready!');
 
+
+    // After creating teachers table, add this:
+    console.log('🔄 Auto-populating teachers from schedule...');
+    await client.query(`
+  INSERT INTO teachers (name, notifications_enabled)
+  SELECT DISTINCT LOWER(teacher) as name, true
+  FROM schedules
+  WHERE teacher IS NOT NULL 
+    AND teacher != ''
+    AND LOWER(teacher) NOT IN (SELECT LOWER(name) FROM teachers)
+  ON CONFLICT (name) DO NOTHING
+`);
+
+    const teacherCount = await client.query('SELECT COUNT(*) FROM teachers');
+    console.log(`✅ ${teacherCount.rows[0].count} teachers in database`);
+
     // Create admin user
     const adminCheck = await client.query("SELECT * FROM users WHERE username = 'admin'");
     if (adminCheck.rows.length === 0) {
