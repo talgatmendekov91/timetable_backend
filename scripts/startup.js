@@ -1,4 +1,4 @@
-// scripts/startup.js - WITH FULL ERROR LOGGING AND SEPARATE MIGRATION FILE
+// scripts/startup.js - WITH PROPER TELEGRAM INITIALIZATION
 require('dotenv').config();
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
@@ -28,7 +28,6 @@ const runMigrationFile = async (client, filename) => {
     console.log(`📦 Running migration: ${filename}`);
     const filePath = path.join(__dirname, filename);
 
-    // Check if file exists
     if (!fs.existsSync(filePath)) {
       console.warn(`⚠️ Migration file not found: ${filename}, skipping...`);
       return;
@@ -82,7 +81,7 @@ const setupDatabase = async () => {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher ON schedules(teacher)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_group ON schedules(group_name)`);
 
-    // Add columns if they don't exist (migrations)
+    // Add columns if they don't exist
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(20) DEFAULT 'lecture'`);
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 1`);
 
@@ -99,21 +98,22 @@ const setupDatabase = async () => {
       )`);
     console.log('✅ Users table ready!');
 
-    // RUN THE SEPARATE MIGRATION FILE FOR BOOKING_REQUESTS
-    // This will create the booking_requests table and its indexes
+    // Run booking migration
     await runMigrationFile(client, 'booking-migration.sql');
+    
+    // Create teachers table
     await client.query(`
-  CREATE TABLE IF NOT EXISTS teachers (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) UNIQUE NOT NULL,
-    telegram_id VARCHAR(50),
-    notifications_enabled BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE INDEX IF NOT EXISTS idx_teacher_telegram ON teachers(telegram_id);
-  CREATE INDEX IF NOT EXISTS idx_teacher_name ON teachers(LOWER(name));
-`);
+      CREATE TABLE IF NOT EXISTS teachers (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) UNIQUE NOT NULL,
+        telegram_id VARCHAR(50),
+        notifications_enabled BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_teacher_telegram ON teachers(telegram_id);
+      CREATE INDEX IF NOT EXISTS idx_teacher_name ON teachers(LOWER(name));
+    `);
     console.log('✅ Teachers table ready!');
 
     // Create admin user
@@ -150,7 +150,13 @@ const setupDatabase = async () => {
     console.log(`✅ ${groups.length} groups ready!`);
 
     console.log('🚀 Starting Express server...');
-    require('../src/server');
+    
+    // IMPORTANT: Import the server but DON'T release the client yet
+    // The server needs the pool to be available
+    const app = require('../src/server');
+    
+    console.log('✅ Server started successfully!');
+    console.log('🤖 Telegram bot should now be initializing...');
 
   } catch (error) {
     console.error('❌ Setup failed:');
@@ -161,9 +167,12 @@ const setupDatabase = async () => {
     console.error('Full error:', error);
     console.error('Stack trace:', error.stack);
     process.exit(1);
-  } finally {
-    if (client) client.release();
   }
+  // Don't release the client here - let the server manage the pool
 };
 
-setupDatabase();
+// Run setup
+setupDatabase().catch(err => {
+  console.error('Fatal error:', err);
+  process.exit(1);
+});
