@@ -4,17 +4,25 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
-const teacherRoutes = require('./routes/teacherRoutes');
-const { startTelegramNotifications } = require('./services/telegramCron');
 require('dotenv').config();
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const scheduleRoutes = require('./routes/scheduleRoutes');
 const groupRoutes = require('./routes/groupRoutes');
-const bookingRoutes = require('./routes/bookingRoutes'); // Moved this down with other routes
+const bookingRoutes = require('./routes/bookingRoutes');
+const teacherRoutes = require('./routes/teacherRoutes');
 
-// Initialize express app (THIS MUST COME BEFORE USING app)
+// Import Telegram with error handling
+let startTelegramNotifications = null;
+try {
+  const telegram = require('./services/telegramCron');
+  startTelegramNotifications = telegram.startTelegramNotifications;
+} catch (error) {
+  console.error('⚠️ Could not load Telegram modules:', error.message);
+}
+
+// Initialize express app
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -43,11 +51,9 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.method === 'OPTIONS' // Skip rate limit for preflight
+  skip: (req) => req.method === 'OPTIONS'
 });
 app.use('/api/', limiter);
-
-app.use('/api/teachers', teacherRoutes);
 
 // Logging middleware
 if (process.env.NODE_ENV === 'development') {
@@ -65,11 +71,12 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API routes (ALL routes go here, AFTER app is initialized)
+// API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/groups', groupRoutes);
-app.use('/api/booking-requests', bookingRoutes); // Moved here with other routes
+app.use('/api/booking-requests', bookingRoutes);
+app.use('/api/teachers', teacherRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -106,9 +113,24 @@ app.listen(PORT, () => {
 ║                                                       ║
 ╚═══════════════════════════════════════════════════════╝
   `);
+  
+  // Start Telegram notifications with full error handling
+  if (startTelegramNotifications) {
+    try {
+      console.log('🔄 Attempting to start Telegram bot...');
+      startTelegramNotifications();
+      console.log('✅ Telegram notifications started successfully');
+    } catch (error) {
+      console.error('❌ Failed to start Telegram bot:');
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      console.error('Stack trace:', error.stack);
+      console.log('⚠️ Server continuing without Telegram notifications');
+    }
+  } else {
+    console.log('⚠️ Telegram modules not loaded. Skipping Telegram notifications.');
+  }
 });
-
-startTelegramNotifications();
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
