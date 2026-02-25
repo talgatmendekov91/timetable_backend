@@ -27,13 +27,13 @@ const runMigrationFile = async (client, filename) => {
   try {
     console.log(`📦 Running migration: ${filename}`);
     const filePath = path.join(__dirname, filename);
-    
+
     // Check if file exists
     if (!fs.existsSync(filePath)) {
       console.warn(`⚠️ Migration file not found: ${filename}, skipping...`);
       return;
     }
-    
+
     const migrationSQL = fs.readFileSync(filePath, 'utf8');
     await client.query(migrationSQL);
     console.log(`✅ Migration completed: ${filename}`);
@@ -81,11 +81,11 @@ const setupDatabase = async () => {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_day ON schedules(day)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher ON schedules(teacher)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_group ON schedules(group_name)`);
-    
+
     // Add columns if they don't exist (migrations)
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(20) DEFAULT 'lecture'`);
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 1`);
-    
+
     console.log('✅ Schedules table and indexes ready!');
 
     // Create users table
@@ -102,6 +102,19 @@ const setupDatabase = async () => {
     // RUN THE SEPARATE MIGRATION FILE FOR BOOKING_REQUESTS
     // This will create the booking_requests table and its indexes
     await runMigrationFile(client, 'booking-migration.sql');
+    await client.query(`
+  CREATE TABLE IF NOT EXISTS teachers (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    telegram_id VARCHAR(50),
+    notifications_enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_teacher_telegram ON teachers(telegram_id);
+  CREATE INDEX IF NOT EXISTS idx_teacher_name ON teachers(LOWER(name));
+`);
+    console.log('✅ Teachers table ready!');
 
     // Create admin user
     const adminCheck = await client.query("SELECT * FROM users WHERE username = 'admin'");

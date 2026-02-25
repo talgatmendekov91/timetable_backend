@@ -4,6 +4,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
+const teacherRoutes = require('./routes/teacherRoutes');
+const { startTelegramNotifications } = require('./services/telegramCron');
 require('dotenv').config();
 
 // Import routes
@@ -44,6 +46,8 @@ const limiter = rateLimit({
   skip: (req) => req.method === 'OPTIONS' // Skip rate limit for preflight
 });
 app.use('/api/', limiter);
+
+app.use('/api/teachers', teacherRoutes);
 
 // Logging middleware
 if (process.env.NODE_ENV === 'development') {
@@ -103,6 +107,8 @@ app.listen(PORT, () => {
 ╚═══════════════════════════════════════════════════════╝
   `);
 });
+
+startTelegramNotifications();
 
 // Graceful shutdown
 process.on('SIGTERM', () => {

@@ -1,0 +1,29 @@
+# Backend Integration for Booking Routes
+
+## Add booking routes to server.js
+
+Find this section in server.js:
+```javascript
+const authRoutes = require('./routes/authRoutes');
+const scheduleRoutes = require('./routes/scheduleRoutes');
+const groupRoutes = require('./routes/groupRoutes');
+```
+
+Add:
+```javascript
+const bookingRoutes = require('./routes/bookingRoutes');
+```
+
+Then find:
+```javascript
+app.use('/api/auth', authRoutes);
+app.use('/api/schedules', scheduleRoutes);
+app.use('/api/groups', groupRoutes);
+```
+
+Add:
+```javascript
+app.use('/api/booking-requests', bookingRoutes);
+```
+
+That's it! The bookingRoutes.js file I provided earlier handles all the backend logic.

@@ -10,7 +10,12 @@
     "seed": "node scripts/seedData.js",
     "server": "node src/server.js"
   },
-  "keywords": ["university", "schedule", "timetable", "api"],
+  "keywords": [
+    "university",
+    "schedule",
+    "timetable",
+    "api"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -22,12 +27,11 @@
     "dotenv": "^16.3.1",
     "helmet": "^7.1.0",
     "express-rate-limit": "^7.1.5",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "telegraf": "^4.12.2",
+    "node-cron": "^3.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
   }
 }
-
-
-
