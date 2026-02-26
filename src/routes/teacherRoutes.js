@@ -16,24 +16,39 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
+// TEMP: One-time fix to trim all telegram_ids — visit /api/teachers/fix-trim once, then remove this route
+router.get('/fix-trim', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE teachers SET telegram_id = TRIM(telegram_id) WHERE telegram_id IS NOT NULL RETURNING id, name, telegram_id`
+    );
+    res.json({ success: true, fixed: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Debug - remove after fixing
+router.get('/debug', async (req, res) => {
+  const result = await pool.query('SELECT id, name, telegram_id, LENGTH(telegram_id) as len FROM teachers');
+  res.json(result.rows);
+});
+
 // Create or update teacher
 router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   const { name, telegram_id, notifications_enabled } = req.body;
-
   if (!name) {
     return res.status(400).json({ success: false, error: 'Name is required' });
   }
-
   try {
     const result = await pool.query(
       `INSERT INTO teachers (name, telegram_id, notifications_enabled)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (name) 
-        DO UPDATE SET telegram_id = $2, notifications_enabled = $3
-        RETURNING *`,
-      [name, telegram_id, notifications_enabled !== false]
+       VALUES ($1, $2, $3)
+       ON CONFLICT (name)
+       DO UPDATE SET telegram_id = $2, notifications_enabled = $3
+       RETURNING *`,
+      [name, telegram_id?.toString().trim() || null, notifications_enabled !== false]
     );
-
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -41,19 +56,16 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
 });
 
 // Update teacher telegram ID
-router.put('/:id/telegram', authenticateToken, requireAdmin, async (req, res) => {
+router.put('/:id/telegram', authenticateToken, async (req, res) => {
   const { telegram_id } = req.body;
-
   try {
     const result = await pool.query(
       'UPDATE teachers SET telegram_id = $1 WHERE id = $2 RETURNING *',
-      [telegram_id?.toString().trim(), req.params.id] 
+      [telegram_id?.toString().trim() || null, req.params.id]  // ← always trim
     );
-
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Teacher not found' });
     }
-
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -68,12 +80,6 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
-});
-
-// TEMP DEBUG - remove after fixing
-router.get('/debug', async (req, res) => {
-  const result = await pool.query('SELECT id, name, telegram_id FROM teachers');
-  res.json(result.rows);
 });
 
 module.exports = router;
