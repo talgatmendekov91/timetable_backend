@@ -48,18 +48,31 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Rate limiting
+// const limiter = rateLimit({
+//   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+//   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
+//   message: 'Too many requests from this IP, please try again later.',
+//   standardHeaders: true,
+//   legacyHeaders: false,
+//   skip: (req) => req.method === 'OPTIONS',
+//   keyGenerator: (req) => {
+//     return req.headers['x-forwarded-for'] || req.ip;
+//   }
+// });
+
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: (req) => req.method === 'OPTIONS',
-  keyGenerator: (req) => {
-    return req.headers['x-forwarded-for'] || req.ip;
-  }
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 1000, // was 100 → now 1000
+  // ... rest stays the same
 });
 app.use('/api/', limiter);
+
+const bulkLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10, // 10 bulk imports per minute is plenty
+  skip: (req) => req.method !== 'POST', // only limit POSTs
+});
+app.use('/api/schedules/bulk', bulkLimiter);
 
 // Logging middleware
 if (process.env.NODE_ENV === 'development') {
