@@ -47,7 +47,7 @@ router.put('/:id/telegram', authenticateToken, requireAdmin, async (req, res) =>
   try {
     const result = await pool.query(
       'UPDATE teachers SET telegram_id = $1 WHERE id = $2 RETURNING *',
-      [telegram_id, req.params.id]
+      [telegram_id?.toString().trim(), req.params.id] 
     );
 
     if (result.rows.length === 0) {
