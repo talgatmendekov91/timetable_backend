@@ -43,36 +43,40 @@ app.use(cors({
 // Handle OPTIONS requests explicitly
 app.options('*', cors());
 
-// Body parser middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Body parser middleware - increase limit for bulk imports
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Rate limiting
-// const limiter = rateLimit({
-//   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-//   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
-//   message: 'Too many requests from this IP, please try again later.',
-//   standardHeaders: true,
-//   legacyHeaders: false,
-//   skip: (req) => req.method === 'OPTIONS',
-//   keyGenerator: (req) => {
-//     return req.headers['x-forwarded-for'] || req.ip;
-//   }
-// });
+// ── Rate limiters ──────────────────────────────────────────────────────────────
 
+// Bulk import: generous limit — it's one big request, not many small ones
+const bulkImportLimiter = rateLimit({
+  windowMs: 60 * 1000,        // 1 minute
+  max: 20,                    // 20 bulk imports per minute is plenty
+  message: 'Too many bulk import requests, please wait a moment.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS',
+});
+
+// General API limiter — raised to accommodate normal usage
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 1000, // was 100 → now 1000
-  // ... rest stays the same
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 2000, // raised from 100 → 2000
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS',
+  keyGenerator: (req) => {
+    return req.headers['x-forwarded-for'] || req.ip;
+  }
 });
+
+// Apply bulk limiter BEFORE general limiter so it takes precedence on that route
+app.use('/api/schedules/bulk', bulkImportLimiter);
 app.use('/api/', limiter);
 
-const bulkLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10, // 10 bulk imports per minute is plenty
-  skip: (req) => req.method !== 'POST', // only limit POSTs
-});
-app.use('/api/schedules/bulk', bulkLimiter);
+// ──────────────────────────────────────────────────────────────────────────────
 
 // Logging middleware
 if (process.env.NODE_ENV === 'development') {
@@ -127,6 +131,7 @@ const server = app.listen(PORT, () => {
 ║   Server running on port: ${PORT}                        ║
 ║   Environment: ${process.env.NODE_ENV || 'development'}                      ║
 ║   CORS: Enabled (all origins)                        ║
+║   Rate limit: 2000 req / 15 min (general)            ║
 ║   Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? '✅ Configured' : '❌ Not configured'}                ║
 ║                                                       ║
 ║   Health Check: http://localhost:${PORT}/health         ║
@@ -134,7 +139,7 @@ const server = app.listen(PORT, () => {
 ║                                                       ║
 ╚═══════════════════════════════════════════════════════╝
   `);
-  
+
   // Start Telegram notifications
   if (startTelegramNotifications) {
     console.log('🔄 Initializing Telegram service...');
@@ -144,7 +149,7 @@ const server = app.listen(PORT, () => {
       } catch (error) {
         console.error('❌ Failed to start Telegram service:', error);
       }
-    }, 1000); // Small delay to ensure server is fully ready
+    }, 1000);
   } else {
     console.log('⚠️ Telegram service not available');
   }
