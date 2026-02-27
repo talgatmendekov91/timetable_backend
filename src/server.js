@@ -8,7 +8,7 @@ require('dotenv').config();
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const scheduleRoutes = require('./routes/scheduleRoutes');
-const groupRoutes = require('./routes/groupRoutes');
+const groupRoutes = require('./routes/groupChannelRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
 const teacherRoutes = require('./routes/teacherRoutes');
 const groupChannelRoutes = require('./routes/groupChannelRoutes');
