@@ -63,6 +63,24 @@ router.delete('/:id/telegram', authenticateToken, async (req, res) => {
   }
 });
 
+
+// PUT /teachers/:id/name  — rename a teacher record
+router.put('/:id/name', authenticateToken, async (req, res) => {
+  const { id }   = req.params;
+  const { name } = req.body;
+  if (!name?.trim()) return res.status(400).json({ success: false, error: 'name is required' });
+  try {
+    const result = await pool.query(
+      'UPDATE teachers SET name = $1 WHERE id = $2 RETURNING id, name',
+      [name.trim(), id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // DELETE /teachers/:id  — permanently remove a teacher record
 router.delete('/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
