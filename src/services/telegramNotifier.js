@@ -2,15 +2,6 @@
 const { Telegraf } = require('telegraf');
 const pool = require('../config/database');
 
-// Bishkek is UTC+6, no DST
-const TIMEZONE_OFFSET_HOURS = parseInt(process.env.TIMEZONE_OFFSET_HOURS || '6');
-
-const getBishkekTime = () => {
-  const now = new Date();
-  // Shift UTC time by timezone offset
-  return new Date(now.getTime() + TIMEZONE_OFFSET_HOURS * 60 * 60 * 1000);
-};
-
 class TelegramNotifier {
   constructor() {
     this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
@@ -18,68 +9,37 @@ class TelegramNotifier {
   }
 
   setupBot() {
+    // /start — teacher gets their Telegram ID
     this.bot.command('start', async (ctx) => {
       const telegramId = ctx.from.id;
-      const username = ctx.from.username || ctx.from.first_name;
+      const username   = ctx.from.username || ctx.from.first_name;
       ctx.reply(
         `Welcome to University Schedule Bot! 🎓\n\n` +
-        `Your Telegram ID: ${telegramId}\n` +
+        `Your Telegram ID: <code>${telegramId}</code>\n` +
         `Username: @${username}\n\n` +
-        `Please ask your admin to link this ID to your teacher account.`
+        `Please ask your admin to link this ID to your teacher account.`,
+        { parse_mode: 'HTML' }
       );
     });
 
+    // /status — check if linked
     this.bot.command('status', async (ctx) => {
       const telegramId = ctx.from.id;
       try {
         const result = await pool.query(
-          'SELECT * FROM teachers WHERE telegram_id = $1',
+          'SELECT name FROM teachers WHERE telegram_id = $1',
           [telegramId.toString()]
         );
         if (result.rows.length > 0) {
-          const teacher = result.rows[0];
-          ctx.reply(
-            `✅ You are registered!\n\n` +
-            `Teacher: ${teacher.name}\n` +
-            `Notifications: ${teacher.notifications_enabled ? 'ON' : 'OFF'}\n\n` +
-            `Use /enable to turn on notifications\n` +
-            `Use /disable to turn off notifications`
-          );
+          ctx.reply(`✅ You are registered as <b>${result.rows[0].name}</b>.`, { parse_mode: 'HTML' });
         } else {
           ctx.reply(
-            `❌ You are not registered yet.\n\n` +
-            `Your Telegram ID: ${telegramId}\n` +
-            `Please contact your admin to link this ID to your teacher account.`
+            `❌ Not registered yet.\n\nYour Telegram ID: <code>${telegramId}</code>\nAsk your admin to link it.`,
+            { parse_mode: 'HTML' }
           );
         }
-      } catch (error) {
+      } catch {
         ctx.reply('Error checking status. Please try again later.');
-      }
-    });
-
-    this.bot.command('enable', async (ctx) => {
-      const telegramId = ctx.from.id;
-      try {
-        await pool.query(
-          'UPDATE teachers SET notifications_enabled = true WHERE telegram_id = $1',
-          [telegramId.toString()]
-        );
-        ctx.reply('✅ Notifications enabled! You will receive reminders 1 hour before your classes.');
-      } catch (error) {
-        ctx.reply('Error enabling notifications.');
-      }
-    });
-
-    this.bot.command('disable', async (ctx) => {
-      const telegramId = ctx.from.id;
-      try {
-        await pool.query(
-          'UPDATE teachers SET notifications_enabled = false WHERE telegram_id = $1',
-          [telegramId.toString()]
-        );
-        ctx.reply('❌ Notifications disabled.');
-      } catch (error) {
-        ctx.reply('Error disabling notifications.');
       }
     });
 
@@ -87,65 +47,86 @@ class TelegramNotifier {
     console.log('✅ Telegram bot started');
   }
 
-  async sendNotification(telegramId, message) {
+  // ── Core send ───────────────────────────────────────────────────────────────
+
+  async sendMessage(chatId, message) {
     try {
-      await this.bot.telegram.sendMessage(telegramId, message, { parse_mode: 'HTML' });
+      await this.bot.telegram.sendMessage(chatId, message, { parse_mode: 'HTML' });
       return true;
     } catch (error) {
-      console.error(`Failed to send notification to ${telegramId}:`, error.message);
+      console.error(`Failed to send to ${chatId}:`, error.message);
       return false;
     }
   }
 
-  async checkUpcomingLessons() {
-    // Use local university time (UTC+6 for Bishkek), not server UTC time
-    const localNow = getBishkekTime();
-    const localOneHourLater = new Date(localNow.getTime() + 60 * 60 * 1000);
+  // ── Schedule change notifications ───────────────────────────────────────────
+  // Called from scheduleRoutes whenever a class is added, updated, or deleted.
+  // changeType: 'added' | 'updated' | 'deleted'
+  // classData:  { group, day, time, course, teacher, room, duration }
+  // oldData:    previous classData (only for 'updated')
 
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const currentDay = days[localNow.getDay()];
-    const currentTime = localNow.toISOString().slice(11, 16);      // HH:MM in local time
-    const targetTime  = localOneHourLater.toISOString().slice(11, 16); // HH:MM in local time
+  async notifyScheduleChange(changeType, classData, oldData = null) {
+    if (!classData) return;
+    const { group, teacher } = classData;
 
-    console.log(`⏰ Local time (UTC+${TIMEZONE_OFFSET_HOURS}): ${currentDay} ${currentTime} → checking until ${targetTime}`);
-
+    // 1. Notify the teacher personally
     try {
-      const result = await pool.query(`
-        SELECT DISTINCT
-          s.teacher,
-          s.course,
-          s.room,
-          s.time,
-          s.day,
-          s.group_name,
-          t.telegram_id,
-          t.notifications_enabled
-        FROM schedules s
-        LEFT JOIN teachers t ON LOWER(s.teacher) = LOWER(t.name)
-        WHERE s.day = $1
-          AND s.time >= $2
-          AND s.time <= $3
-          AND t.telegram_id IS NOT NULL
-          AND t.notifications_enabled = true
-      `, [currentDay, currentTime, targetTime]);
-
-      console.log(`Found ${result.rows.length} upcoming lessons to notify`);
-
-      for (const lesson of result.rows) {
-        const message =
-          `⏰ <b>Reminder: Class in 1 hour!</b>\n\n` +
-          `📚 Course: ${lesson.course}\n` +
-          `👥 Group: ${lesson.group_name}\n` +
-          `🏫 Room: ${lesson.room || 'TBA'}\n` +
-          `⏰ Time: ${lesson.time}\n` +
-          `📅 Day: ${lesson.day}\n\n` +
-          `Good luck with your class! 🎓`;
-
-        await this.sendNotification(lesson.telegram_id, message);
+      const { rows } = await pool.query(
+        `SELECT telegram_id FROM teachers WHERE LOWER(name) = LOWER($1) AND telegram_id IS NOT NULL`,
+        [teacher || '']
+      );
+      if (rows.length > 0) {
+        await this.sendMessage(rows[0].telegram_id, this._teacherMsg(changeType, classData, oldData));
       }
-    } catch (error) {
-      console.error('Error checking upcoming lessons:', error);
+    } catch (e) {
+      console.error('notifyScheduleChange (teacher):', e.message);
     }
+
+    // 2. Notify the group channel
+    try {
+      const { rows } = await pool.query(
+        `SELECT chat_id FROM group_channels WHERE group_name = $1`,
+        [group]
+      );
+      if (rows.length > 0) {
+        await this.sendMessage(rows[0].chat_id, this._groupMsg(changeType, classData, oldData));
+      }
+    } catch (e) {
+      console.error('notifyScheduleChange (group):', e.message);
+    }
+  }
+
+  _teacherMsg(changeType, data, oldData) {
+    const { group, day, time, course, room, duration } = data;
+    const dur = duration > 1 ? ` (${duration * 40} min)` : '';
+    const base = `📚 ${course}\n👥 ${group}\n📅 ${day}  ⏰ ${time}${dur}\n🏫 ${room || 'TBA'}`;
+
+    if (changeType === 'added')   return `📅 <b>New class added to your schedule</b>\n\n${base}`;
+    if (changeType === 'deleted') return `🗑️ <b>Class removed from your schedule</b>\n\n${base}`;
+
+    const diff = this._diff(oldData, data);
+    return `✏️ <b>Your class was updated</b>\n\n${base}${diff ? `\n\n<b>Changes:</b>\n${diff}` : ''}`;
+  }
+
+  _groupMsg(changeType, data, oldData) {
+    const { day, time, course, teacher, room, duration } = data;
+    const dur = duration > 1 ? ` (${duration * 40} min)` : '';
+    const base = `📚 ${course}\n👨‍🏫 ${teacher || 'TBA'}\n📅 ${day}  ⏰ ${time}${dur}\n🏫 ${room || 'TBA'}`;
+
+    if (changeType === 'added')   return `📅 <b>New class added to your schedule</b>\n\n${base}`;
+    if (changeType === 'deleted') return `🗑️ <b>Class cancelled / removed</b>\n\n${base}`;
+
+    const diff = this._diff(oldData, data);
+    return `✏️ <b>Class updated</b>\n\n${base}${diff ? `\n\n<b>Changes:</b>\n${diff}` : ''}`;
+  }
+
+  _diff(oldData, newData) {
+    if (!oldData) return '';
+    const fields = { course: '📚 Course', room: '🏫 Room', day: '📅 Day', time: '⏰ Time', teacher: '👨‍🏫 Teacher' };
+    return Object.entries(fields)
+      .filter(([k]) => oldData[k] !== newData[k])
+      .map(([k, label]) => `  ${label}: ${oldData[k] || '—'} → ${newData[k] || '—'}`)
+      .join('\n');
   }
 
   stop() {
