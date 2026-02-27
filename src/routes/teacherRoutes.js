@@ -1,84 +1,85 @@
 // Backend: src/routes/teacherRoutes.js
-const express = require('express');
-const pool = require('../config/database');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const router = express.Router();
+// REPLACE your entire existing teacherRoutes.js with this file
 
-// Get all teachers
+const express = require('express');
+const router  = express.Router();
+const pool    = require('../config/database');
+const { authenticateToken } = require('../middleware/auth');
+
+// GET all teachers
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT id, name, telegram_id, notifications_enabled FROM teachers ORDER BY name'
     );
     res.json({ success: true, data: result.rows });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (err) {
+    console.error('GET /teachers:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// TEMP: One-time fix to trim all telegram_ids — visit /api/teachers/fix-trim once, then remove this route
-router.get('/fix-trim', async (req, res) => {
-  try {
-    const result = await pool.query(
-      `UPDATE teachers SET telegram_id = TRIM(telegram_id) WHERE telegram_id IS NOT NULL RETURNING id, name, telegram_id`
-    );
-    res.json({ success: true, fixed: result.rows });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Debug - remove after fixing
-router.get('/debug', async (req, res) => {
-  const result = await pool.query('SELECT id, name, telegram_id, LENGTH(telegram_id) as len FROM teachers');
-  res.json(result.rows);
-});
-
-// Create or update teacher
-router.post('/', authenticateToken, requireAdmin, async (req, res) => {
-  const { name, telegram_id, notifications_enabled } = req.body;
-  if (!name) {
-    return res.status(400).json({ success: false, error: 'Name is required' });
-  }
-  try {
-    const result = await pool.query(
-      `INSERT INTO teachers (name, telegram_id, notifications_enabled)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (name)
-       DO UPDATE SET telegram_id = $2, notifications_enabled = $3
-       RETURNING *`,
-      [name, telegram_id?.toString().trim() || null, notifications_enabled !== false]
-    );
-    res.json({ success: true, data: result.rows[0] });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Update teacher telegram ID
+// PUT /teachers/:id/telegram  — save Telegram ID
 router.put('/:id/telegram', authenticateToken, async (req, res) => {
+  const { id } = req.params;
   const { telegram_id } = req.body;
+  if (!telegram_id) {
+    return res.status(400).json({ success: false, error: 'telegram_id is required' });
+  }
   try {
+    // Does NOT use updated_at — safe for any schema
     const result = await pool.query(
-      'UPDATE teachers SET telegram_id = $1 WHERE id = $2 RETURNING *',
-      [telegram_id?.toString().trim() || null, req.params.id]  // ← always trim
+      `UPDATE teachers SET telegram_id = $1 WHERE id = $2 RETURNING id, name, telegram_id`,
+      [telegram_id.toString(), id]
     );
-    if (result.rows.length === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ success: false, error: 'Teacher not found' });
     }
     res.json({ success: true, data: result.rows[0] });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (err) {
+    console.error('PUT /teachers/:id/telegram:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Delete teacher
-router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
+// DELETE /teachers/:id/telegram  — clear Telegram ID
+router.delete('/:id/telegram', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  console.log(`DELETE /teachers/${id}/telegram called`);
   try {
-    await pool.query('DELETE FROM teachers WHERE id = $1', [req.params.id]);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    // Does NOT use updated_at — safe for any schema
+    const result = await pool.query(
+      `UPDATE teachers SET telegram_id = NULL WHERE id = $1 RETURNING id, name, telegram_id`,
+      [id]
+    );
+    console.log(`Rows updated: ${result.rowCount}`);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, error: `Teacher with id=${id} not found` });
+    }
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    console.error('DELETE /teachers/:id/telegram ERROR:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /teachers/:id  — permanently remove a teacher record
+router.delete('/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  console.log(`DELETE /teachers/${id} called`);
+  try {
+    const result = await pool.query(
+      'DELETE FROM teachers WHERE id = $1 RETURNING id, name',
+      [id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, error: `Teacher id=${id} not found` });
+    }
+    console.log(`Deleted teacher: ${result.rows[0].name}`);
+    res.json({ success: true, deleted: result.rows[0] });
+  } catch (err) {
+    console.error('DELETE /teachers/:id ERROR:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
