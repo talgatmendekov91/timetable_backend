@@ -11,6 +11,8 @@ const scheduleRoutes = require('./routes/scheduleRoutes');
 const groupRoutes = require('./routes/groupRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
 const teacherRoutes = require('./routes/teacherRoutes');
+const groupChannelRoutes = require('./routes/groupChannelRoutes');
+const broadcastRoutes    = require('./routes/broadcastRoutes');
 
 // Import Telegram service
 let startTelegramNotifications = null;
@@ -46,6 +48,8 @@ app.options('*', cors());
 // Body parser middleware - increase limit for bulk imports
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use('/api/group-channels', groupChannelRoutes);
+app.use('/api/broadcast',      broadcastRoutes);
 
 // ── Rate limiters ──────────────────────────────────────────────────────────────
 
