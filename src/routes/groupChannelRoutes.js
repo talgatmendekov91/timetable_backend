@@ -1,31 +1,77 @@
+// Backend: src/routes/groupChannelRoutes.js
 const express = require('express');
-const pool = require('../config/database');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const router = express.Router();
+const router  = express.Router();
+const pool    = require('../config/database');
+const { authenticateToken } = require('../middleware/auth');
 
-router.get('/', async function(req, res) {
+// Ensure table exists on startup
+pool.query(`
+  CREATE TABLE IF NOT EXISTS group_channels (
+    group_name  TEXT PRIMARY KEY,
+    chat_id     TEXT NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('group_channels table init:', err.message));
+
+// GET all group channels
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT name FROM groups ORDER BY name');
-    res.json(result.rows.map(function(r) { return r.name; }));
-  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+    // Return all known groups, merging with channel rows so every group shows up
+    const [groupsResult, channelsResult] = await Promise.all([
+      pool.query('SELECT DISTINCT group_name FROM schedules ORDER BY group_name'),
+      pool.query('SELECT * FROM group_channels ORDER BY group_name'),
+    ]);
+
+    const channelMap = {};
+    channelsResult.rows.forEach(r => { channelMap[r.group_name] = r.chat_id; });
+
+    const data = groupsResult.rows.map(r => ({
+      group_name: r.group_name,
+      chat_id: channelMap[r.group_name] || null,
+    }));
+
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('GET group-channels:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
-router.post('/', authenticateToken, requireAdmin, async function(req, res) {
+// POST / PUT — upsert a group channel
+router.post('/', authenticateToken, async (req, res) => {
+  console.log('POST /api/group-channels body:', JSON.stringify(req.body));
+  // Accept both naming conventions
+  const group_name = req.body.group_name || req.body.name || req.body.groupName;
+  const chat_id    = req.body.chat_id    || req.body.chatId || req.body.chat;
+  if (!group_name || !chat_id) {
+    console.log('Missing fields — group_name:', group_name, 'chat_id:', chat_id);
+    return res.status(400).json({ success: false, error: 'group_name and chat_id are required. Received: ' + JSON.stringify(req.body) });
+  }
   try {
-    var name = (req.body.name || '').trim();
-    if (!name) return res.status(400).json({ success: false, error: 'Name required' });
-    await pool.query('INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [name]);
-    res.json({ success: true, data: { name: name } });
-  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
-});
+    await pool.query(`
+      INSERT INTO group_channels (group_name, chat_id, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (group_name) DO UPDATE SET chat_id = $2, updated_at = NOW()
+    `, [group_name, chat_id.toString()]);
 
-router.delete('/:name', authenticateToken, requireAdmin, async function(req, res) {
-  try {
-    var name = req.params.name;
-    await pool.query('DELETE FROM schedules WHERE group_name = $1', [name]);
-    await pool.query('DELETE FROM groups WHERE name = $1', [name]);
     res.json({ success: true });
-  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+  } catch (err) {
+    console.error('POST group-channels:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE a group channel
+router.delete('/:groupName', authenticateToken, async (req, res) => {
+  const groupName = decodeURIComponent(req.params.groupName);
+  try {
+    await pool.query('DELETE FROM group_channels WHERE group_name = $1', [groupName]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE group-channels:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 module.exports = router;
