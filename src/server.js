@@ -92,6 +92,7 @@ app.use('/api/schedules',       scheduleRoutes);
 app.use('/api/booking-requests',bookingRoutes);
 app.use('/api/teachers',        teacherRoutes);
 app.use('/api/group-channels',  groupChannelRoutes);
+app.use('/api/groups',          groupChannelRoutes);  // legacy route App.js needs
 app.use('/api/broadcast',       broadcastRoutes);
 
 // ── 404 handler ────────────────────────────────────────────────────────────────
