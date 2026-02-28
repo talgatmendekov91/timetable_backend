@@ -27,12 +27,10 @@ const runMigrationFile = async (client, filename) => {
   try {
     console.log(`📦 Running migration: ${filename}`);
     const filePath = path.join(__dirname, filename);
-
     if (!fs.existsSync(filePath)) {
       console.warn(`⚠️ Migration file not found: ${filename}, skipping...`);
       return;
     }
-
     const migrationSQL = fs.readFileSync(filePath, 'utf8');
     await client.query(migrationSQL);
     console.log(`✅ Migration completed: ${filename}`);
@@ -84,7 +82,6 @@ const setupDatabase = async () => {
     // Add columns if they don't exist
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(20) DEFAULT 'lecture'`);
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 1`);
-
     console.log('✅ Schedules table and indexes ready!');
 
     // Create users table
@@ -110,42 +107,34 @@ const setupDatabase = async () => {
         notifications_enabled BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE INDEX IF NOT EXISTS idx_teacher_telegram ON teachers(telegram_id);
-      CREATE INDEX IF NOT EXISTS idx_teacher_name ON teachers(LOWER(name));
+      )
     `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher_telegram ON teachers(telegram_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher_name ON teachers(LOWER(name))`);
     console.log('✅ Teachers table ready!');
 
-    // В scripts/startup.js, после создания других таблиц, добавьте:
-
-    // Create teachers table
+    // ── group_channels table ─────────────────────────────────────────────────
     await client.query(`
-  CREATE TABLE IF NOT EXISTS teachers (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) UNIQUE NOT NULL,
-    telegram_id VARCHAR(50),
-    notifications_enabled BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE INDEX IF NOT EXISTS idx_teacher_telegram ON teachers(telegram_id);
-  CREATE INDEX IF NOT EXISTS idx_teacher_name ON teachers(LOWER(name));
-`);
-    console.log('✅ Teachers table ready!');
+      CREATE TABLE IF NOT EXISTS group_channels (
+        group_name  TEXT PRIMARY KEY,
+        chat_id     TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ Group channels table ready!');
 
-
-    // After creating teachers table, add this:
+    // Auto-populate teachers from schedule
     console.log('🔄 Auto-populating teachers from schedule...');
     await client.query(`
-  INSERT INTO teachers (name, notifications_enabled)
-  SELECT DISTINCT LOWER(teacher) as name, true
-  FROM schedules
-  WHERE teacher IS NOT NULL 
-    AND teacher != ''
-    AND LOWER(teacher) NOT IN (SELECT LOWER(name) FROM teachers)
-  ON CONFLICT (name) DO NOTHING
-`);
-
+      INSERT INTO teachers (name, notifications_enabled)
+      SELECT DISTINCT LOWER(teacher) as name, true
+      FROM schedules
+      WHERE teacher IS NOT NULL
+        AND teacher != ''
+        AND LOWER(teacher) NOT IN (SELECT LOWER(name) FROM teachers)
+      ON CONFLICT (name) DO NOTHING
+    `);
     const teacherCount = await client.query('SELECT COUNT(*) FROM teachers');
     console.log(`✅ ${teacherCount.rows[0].count} teachers in database`);
 
@@ -173,7 +162,6 @@ const setupDatabase = async () => {
       'IEMIT-25', 'IEMIT-24', 'IEMIT-23',
       'COM-22/1-Group', 'COM-22/2-Group', 'MATH-22'
     ];
-
     for (const group of groups) {
       await client.query(
         'INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING',
@@ -183,11 +171,7 @@ const setupDatabase = async () => {
     console.log(`✅ ${groups.length} groups ready!`);
 
     console.log('🚀 Starting Express server...');
-
-    // IMPORTANT: Import the server but DON'T release the client yet
-    // The server needs the pool to be available
     const app = require('../src/server');
-
     console.log('✅ Server started successfully!');
     console.log('🤖 Telegram bot should now be initializing...');
 
@@ -201,7 +185,6 @@ const setupDatabase = async () => {
     console.error('Stack trace:', error.stack);
     process.exit(1);
   }
-  // Don't release the client here - let the server manage the pool
 };
 
 // Run setup

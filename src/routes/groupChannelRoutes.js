@@ -8,7 +8,7 @@ const { authenticateToken } = require('../middleware/auth');
 pool.query(`
   CREATE TABLE IF NOT EXISTS group_channels (
     group_name  TEXT PRIMARY KEY,
-    chat_id     TEXT NOT NULL,
+    chat_id     TEXT,
     created_at  TIMESTAMPTZ DEFAULT NOW(),
     updated_at  TIMESTAMPTZ DEFAULT NOW()
   )
