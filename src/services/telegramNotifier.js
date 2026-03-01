@@ -9,6 +9,20 @@ class TelegramNotifier {
   }
 
   setupBot() {
+    // Drop any existing webhook and pending updates before launching
+    // This prevents 409 Conflict when Railway restarts the container
+    this.bot.telegram.deleteWebhook({ drop_pending_updates: true })
+      .then(() => {
+        this.bot.launch({ dropPendingUpdates: true });
+        console.log('✅ Telegram bot started');
+      })
+      .catch((err) => {
+        console.error('Failed to delete webhook:', err.message);
+        // Launch anyway
+        this.bot.launch({ dropPendingUpdates: true });
+        console.log('✅ Telegram bot started (fallback)');
+      });
+
     // /start — teacher gets their Telegram ID
     this.bot.command('start', async (ctx) => {
       const telegramId = ctx.from.id;
@@ -43,8 +57,6 @@ class TelegramNotifier {
       }
     });
 
-    this.bot.launch();
-    console.log('✅ Telegram bot started');
   }
 
   // ── Core send ───────────────────────────────────────────────────────────────
@@ -99,25 +111,33 @@ class TelegramNotifier {
   _teacherMsg(changeType, data, oldData) {
     const { group, day, time, course, room, duration } = data;
     const dur = duration > 1 ? ` (${duration * 40} min)` : '';
-    const base = `📚 ${course}\n👥 ${group}\n📅 ${day}  ⏰ ${time}${dur}\n🏫 ${room || 'TBA'}`;
+    const base = `📚 <b>${course}</b>\n👥 Group: ${group}\n📅 ${day}  ⏰ ${time}${dur}\n🏫 Room: ${room || 'TBA'}`;
+    const header = `🏛 <b>Alatoo International University</b>\n<i>Faculty Administration</i>\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    const footer = `\n\n━━━━━━━━━━━━━━━━━━━━━━\n<i>— Faculty Administration</i>`;
 
-    if (changeType === 'added')   return `📅 <b>New class added to your schedule</b>\n\n${base}`;
-    if (changeType === 'deleted') return `🗑️ <b>Class removed from your schedule</b>\n\n${base}`;
+    if (changeType === 'added')
+      return `${header}📅 <b>New Class Added to Your Schedule</b>\n\n${base}${footer}`;
+    if (changeType === 'deleted')
+      return `${header}🗑 <b>Class Removed from Your Schedule</b>\n\n${base}${footer}`;
 
     const diff = this._diff(oldData, data);
-    return `✏️ <b>Your class was updated</b>\n\n${base}${diff ? `\n\n<b>Changes:</b>\n${diff}` : ''}`;
+    return `${header}✏️ <b>Schedule Update</b>\n\n${base}${diff ? `\n\n<b>Changes:</b>\n${diff}` : ''}${footer}`;
   }
 
   _groupMsg(changeType, data, oldData) {
     const { day, time, course, teacher, room, duration } = data;
     const dur = duration > 1 ? ` (${duration * 40} min)` : '';
-    const base = `📚 ${course}\n👨‍🏫 ${teacher || 'TBA'}\n📅 ${day}  ⏰ ${time}${dur}\n🏫 ${room || 'TBA'}`;
+    const base = `📚 <b>${course}</b>\n👨‍🏫 Lecturer: ${teacher || 'TBA'}\n📅 ${day}  ⏰ ${time}${dur}\n🏫 Room: ${room || 'TBA'}`;
+    const header = `🏛 <b>Alatoo International University</b>\n<i>Faculty Administration</i>\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    const footer = `\n\n━━━━━━━━━━━━━━━━━━━━━━\n<i>— Faculty Administration</i>`;
 
-    if (changeType === 'added')   return `📅 <b>New class added to your schedule</b>\n\n${base}`;
-    if (changeType === 'deleted') return `🗑️ <b>Class cancelled / removed</b>\n\n${base}`;
+    if (changeType === 'added')
+      return `${header}📅 <b>New Class Added to Your Schedule</b>\n\n${base}${footer}`;
+    if (changeType === 'deleted')
+      return `${header}🗑 <b>Class Cancelled</b>\n\n${base}${footer}`;
 
     const diff = this._diff(oldData, data);
-    return `✏️ <b>Class updated</b>\n\n${base}${diff ? `\n\n<b>Changes:</b>\n${diff}` : ''}`;
+    return `${header}✏️ <b>Schedule Update</b>\n\n${base}${diff ? `\n\n<b>Changes:</b>\n${diff}` : ''}${footer}`;
   }
 
   _diff(oldData, newData) {
@@ -130,7 +150,7 @@ class TelegramNotifier {
   }
 
   stop() {
-    this.bot.stop();
+    this.bot.stop('SIGTERM');
   }
 }
 

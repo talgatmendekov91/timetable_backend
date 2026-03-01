@@ -83,10 +83,17 @@ router.post('/', authenticateToken, async (req, res) => {
 
   // Build the Telegram message text
   const buildText = () => {
-    let text = `📢 <b>Message from University Admin</b>\n\n`;
+    const now  = new Date();
+    const date = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+    let text = '';
+    text += `🏛 <b>Alatoo International University</b>\n`;
+    text += `<i>Faculty Administration</i>\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
     if (subject?.trim()) text += `📌 <b>${subject.trim()}</b>\n\n`;
     text += message.trim();
-    text += `\n\n<i>— University Admin</i>`;
+    text += `\n\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `<i>📅 ${date}</i>\n`;
+    text += `<i>— Faculty Administration</i>`;
     return text;
   };
   const msgText = buildText();
