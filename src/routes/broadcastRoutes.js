@@ -5,38 +5,61 @@ const pool     = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 
 // Send directly via Telegram HTTP API — avoids conflict with polling bot
+const https = require('https');
+
 async function sendMsg(_, chatId, text) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return { ok: false, error: 'TELEGRAM_BOT_TOKEN not set' };
-  try {
-    const https = require('https');
-    const body  = JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' });
-    const result = await new Promise((resolve, reject) => {
-      const req = https.request({
-        hostname: 'api.telegram.org',
-        path: `/bot${token}/sendMessage`,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          try { resolve(JSON.parse(data)); }
-          catch { resolve({ ok: false, description: data }); }
-        });
-      });
-      req.on('error', reject);
-      req.write(body);
-      req.end();
-    });
-    if (result.ok) return { ok: true };
-    return { ok: false, error: result.description || JSON.stringify(result) };
-  } catch (e) {
-    return { ok: false, error: e.message };
+
+  // Normalize chatId: numeric string → number, @username → keep as string
+  let normalizedChatId = chatId;
+  if (typeof chatId === 'string' && !chatId.startsWith('@')) {
+    const num = parseInt(chatId);
+    if (!isNaN(num)) normalizedChatId = num;
   }
+
+  const bodyObj = { chat_id: normalizedChatId, text, parse_mode: 'HTML' };
+  const bodyStr = JSON.stringify(bodyObj);
+
+  console.log(`Sending to chat_id: ${normalizedChatId}`);
+
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path: `/bot${token}/sendMessage`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(bodyStr),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const result = JSON.parse(data);
+          if (result.ok) {
+            console.log(`✅ Sent to ${normalizedChatId}`);
+            resolve({ ok: true });
+          } else {
+            console.error(`❌ Failed to ${normalizedChatId}:`, result.description);
+            resolve({ ok: false, error: result.description || JSON.stringify(result) });
+          }
+        } catch (e) {
+          resolve({ ok: false, error: 'Invalid response: ' + data });
+        }
+      });
+    });
+    req.on('error', (e) => {
+      console.error('Request error:', e.message);
+      resolve({ ok: false, error: e.message });
+    });
+    req.write(bodyStr);
+    req.end();
+  });
 }
 
-function getBot() { return true; } // kept for compatibility
+function getBot() { return true; }
 
 // POST /api/broadcast
 router.post('/', authenticateToken, async (req, res) => {
