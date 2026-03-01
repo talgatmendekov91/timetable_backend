@@ -2,26 +2,41 @@
 const express  = require('express');
 const router   = express.Router();
 const pool     = require('../config/database');
-const { Telegraf } = require('telegraf');
 const { authenticateToken } = require('../middleware/auth');
 
-// Create a lightweight bot sender directly from the token.
-// This avoids the singleton dependency problem where getNotifier() can
-// return null if the cron module was required in a different module scope.
-function getBot() {
+// Send directly via Telegram HTTP API — avoids conflict with polling bot
+async function sendMsg(_, chatId, text) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) return null;
-  return new Telegraf(token);
-}
-
-async function sendMsg(bot, chatId, text) {
+  if (!token) return { ok: false, error: 'TELEGRAM_BOT_TOKEN not set' };
   try {
-    await bot.telegram.sendMessage(chatId, text, { parse_mode: 'HTML' });
-    return { ok: true };
+    const https = require('https');
+    const body  = JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' });
+    const result = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'api.telegram.org',
+        path: `/bot${token}/sendMessage`,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); }
+          catch { resolve({ ok: false, description: data }); }
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+    if (result.ok) return { ok: true };
+    return { ok: false, error: result.description || JSON.stringify(result) };
   } catch (e) {
-    return { ok: false, error: e.description || e.message };
+    return { ok: false, error: e.message };
   }
 }
+
+function getBot() { return true; } // kept for compatibility
 
 // POST /api/broadcast
 router.post('/', authenticateToken, async (req, res) => {
