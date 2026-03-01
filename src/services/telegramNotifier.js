@@ -1,4 +1,3 @@
-// Backend: src/services/telegramNotifier.js
 const { Telegraf } = require('telegraf');
 const pool = require('../config/database');
 
