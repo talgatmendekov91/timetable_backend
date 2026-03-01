@@ -19,6 +19,46 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
+// POST /teachers — create a new teacher record
+// MUST be before /:id routes so Express doesn't treat 'upsert' as an id
+router.post('/', authenticateToken, async (req, res) => {
+  const { name } = req.body;
+  if (!name?.trim()) return res.status(400).json({ success: false, error: 'name is required' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO teachers (name)
+       VALUES ($1)
+       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id, name, telegram_id`,
+      [name.trim()]
+    );
+    res.json({ success: true, id: result.rows[0].id, data: result.rows[0] });
+  } catch (err) {
+    console.error('POST /teachers:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /teachers/upsert — create or update teacher + telegram_id in one shot
+// MUST be before /:id routes
+router.post('/upsert', authenticateToken, async (req, res) => {
+  const { name, telegram_id } = req.body;
+  if (!name?.trim()) return res.status(400).json({ success: false, error: 'name is required' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO teachers (name, telegram_id)
+       VALUES ($1, $2)
+       ON CONFLICT (name) DO UPDATE SET telegram_id = EXCLUDED.telegram_id
+       RETURNING id, name, telegram_id`,
+      [name.trim(), telegram_id || null]
+    );
+    res.json({ success: true, id: result.rows[0].id, data: result.rows[0] });
+  } catch (err) {
+    console.error('POST /teachers/upsert:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // PUT /teachers/:id/telegram  — save Telegram ID
 router.put('/:id/telegram', authenticateToken, async (req, res) => {
   const { id } = req.params;
@@ -97,42 +137,6 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     res.json({ success: true, deleted: result.rows[0] });
   } catch (err) {
     console.error('DELETE /teachers/:id ERROR:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST /teachers — create a new teacher record
-router.post('/', authenticateToken, async (req, res) => {
-  const { name } = req.body;
-  if (!name?.trim()) return res.status(400).json({ success: false, error: 'name is required' });
-  try {
-    const result = await pool.query(
-      `INSERT INTO teachers (name) VALUES ($1)
-       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-       RETURNING id, name, telegram_id`,
-      [name.trim()]
-    );
-    res.json({ success: true, id: result.rows[0].id, data: result.rows[0] });
-  } catch (err) {
-    console.error('POST /teachers:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST /teachers/upsert — create or update teacher with telegram_id in one shot
-router.post('/upsert', authenticateToken, async (req, res) => {
-  const { name, telegram_id } = req.body;
-  if (!name?.trim()) return res.status(400).json({ success: false, error: 'name is required' });
-  try {
-    const result = await pool.query(
-      `INSERT INTO teachers (name, telegram_id) VALUES ($1, $2)
-       ON CONFLICT (name) DO UPDATE SET telegram_id = EXCLUDED.telegram_id
-       RETURNING id, name, telegram_id`,
-      [name.trim(), telegram_id || null]
-    );
-    res.json({ success: true, id: result.rows[0].id, data: result.rows[0] });
-  } catch (err) {
-    console.error('POST /teachers/upsert:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
