@@ -4,6 +4,24 @@ const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const pool = require('../config/database');
 
+// ── Telegram notifier (optional — won't crash if bot not configured) ─────────
+function getNotifier() {
+  try {
+    if (!process.env.TELEGRAM_BOT_TOKEN) return null;
+    return require('../services/telegramNotifier').getInstance();
+  } catch (e) {
+    return null;
+  }
+}
+
+function notify(changeType, classData, oldData = null) {
+  const notifier = getNotifier();
+  if (!notifier) return;
+  notifier.notifyScheduleChange(changeType, classData, oldData).catch(err => {
+    console.error('Telegram notify error:', err.message);
+  });
+}
+
 // ── GET all schedules ────────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
@@ -11,8 +29,6 @@ router.get('/', async (req, res) => {
       `SELECT group_name, day, time, course, teacher, room, subject_type, duration
        FROM schedules ORDER BY day, time, group_name`
     );
-
-    // Convert to keyed object: { "GROUP-day-time": { ... } }
     const schedule = {};
     result.rows.forEach(row => {
       const key = `${row.group_name}-${row.day}-${row.time}`;
@@ -27,7 +43,6 @@ router.get('/', async (req, res) => {
         duration:    row.duration || 1,
       };
     });
-
     res.json(schedule);
   } catch (err) {
     console.error('GET /schedules error:', err);
@@ -42,6 +57,21 @@ router.post('/', authenticateToken, async (req, res) => {
     if (!group || !day || !time || !course)
       return res.status(400).json({ success: false, error: 'group, day, time, course are required' });
 
+    // Check if class already exists (added vs updated)
+    const existing = await pool.query(
+      `SELECT course, teacher, room, subject_type, duration FROM schedules
+       WHERE group_name=$1 AND day=$2 AND time=$3`,
+      [group, day, time]
+    );
+    const isUpdate = existing.rows.length > 0;
+    const oldData = isUpdate ? {
+      group, day, time,
+      course:      existing.rows[0].course,
+      teacher:     existing.rows[0].teacher || '',
+      room:        existing.rows[0].room || '',
+      duration:    existing.rows[0].duration || 1,
+    } : null;
+
     await pool.query(
       `INSERT INTO schedules (group_name, day, time, course, teacher, room, subject_type, duration)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -55,6 +85,9 @@ router.post('/', authenticateToken, async (req, res) => {
       [group, day, time, course, teacher || '', room || '', subjectType || 'lecture', duration || 1]
     );
 
+    const classData = { group, day, time, course, teacher: teacher || '', room: room || '', duration: duration || 1 };
+    notify(isUpdate ? 'updated' : 'added', classData, oldData);
+
     res.json({ success: true });
   } catch (err) {
     console.error('POST /schedules error:', err);
@@ -62,17 +95,11 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// ── POST /bulk — import many classes in one request ─────────────────────────
-//
-//  Body: { groups: [...], schedule: { "key": { group, day, time, course, teacher, room, subjectType } } }
-//   OR:  array of { group, day, time, course, teacher, room, subjectType }
-//
+// ── POST /bulk ───────────────────────────────────────────────────────────────
 router.post('/bulk', authenticateToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const body = req.body;
-
-    // Accept either array or { groups, schedule } object
     let entries = [];
     let groupNames = new Set();
 
@@ -88,20 +115,12 @@ router.post('/bulk', authenticateToken, async (req, res) => {
     if (entries.length === 0)
       return res.status(400).json({ success: false, error: 'No entries provided' });
 
-    // Collect all group names from entries too
     entries.forEach(e => { if (e.group) groupNames.add(e.group); });
 
     await client.query('BEGIN');
-
-    // 1. Ensure all groups exist
     for (const name of groupNames) {
-      await client.query(
-        `INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
-        [name]
-      );
+      await client.query(`INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`, [name]);
     }
-
-    // 2. Bulk upsert all schedule entries
     let inserted = 0;
     for (const e of entries) {
       if (!e.group || !e.day || !e.time || !e.course) continue;
@@ -109,22 +128,14 @@ router.post('/bulk', authenticateToken, async (req, res) => {
         `INSERT INTO schedules (group_name, day, time, course, teacher, room, subject_type, duration)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          ON CONFLICT (group_name, day, time) DO UPDATE SET
-           course       = EXCLUDED.course,
-           teacher      = EXCLUDED.teacher,
-           room         = EXCLUDED.room,
-           subject_type = EXCLUDED.subject_type,
-           duration     = EXCLUDED.duration,
-           updated_at   = CURRENT_TIMESTAMP`,
+           course=$4, teacher=$5, room=$6, subject_type=$7, duration=$8, updated_at=CURRENT_TIMESTAMP`,
         [e.group, e.day, e.time, e.course, e.teacher || '', e.room || '', e.subjectType || 'lecture', e.duration || 1]
       );
       inserted++;
     }
-
     await client.query('COMMIT');
-
     console.log(`✅ Bulk import: ${inserted} classes, ${groupNames.size} groups`);
     res.json({ success: true, imported: inserted, groups: groupNames.size });
-
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('POST /schedules/bulk error:', err);
@@ -141,10 +152,22 @@ router.delete('/', authenticateToken, async (req, res) => {
     if (!group || !day || !time)
       return res.status(400).json({ success: false, error: 'group, day, time are required' });
 
+    // Fetch before deleting so we can notify
+    const existing = await pool.query(
+      `SELECT course, teacher, room, duration FROM schedules
+       WHERE group_name=$1 AND day=$2 AND time=$3`,
+      [group, day, time]
+    );
+
     await pool.query(
       `DELETE FROM schedules WHERE group_name=$1 AND day=$2 AND time=$3`,
       [group, day, time]
     );
+
+    if (existing.rows.length > 0) {
+      const r = existing.rows[0];
+      notify('deleted', { group, day, time, course: r.course, teacher: r.teacher || '', room: r.room || '', duration: r.duration || 1 });
+    }
 
     res.json({ success: true });
   } catch (err) {

@@ -1,3 +1,4 @@
+// Backend: src/services/telegramNotifier.js
 const { Telegraf } = require('telegraf');
 const pool = require('../config/database');
 
@@ -152,5 +153,15 @@ class TelegramNotifier {
     this.bot.stop('SIGTERM');
   }
 }
+
+// Singleton so only one bot instance is created
+let _instance = null;
+
+TelegramNotifier.getInstance = function() {
+  if (!_instance) {
+    _instance = new TelegramNotifier();
+  }
+  return _instance;
+};
 
 module.exports = TelegramNotifier;
