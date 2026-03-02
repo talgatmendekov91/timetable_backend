@@ -15,7 +15,7 @@ pool.query(`
 `).catch(err => console.error('group_channels table init:', err.message));
 
 // GET all group channels
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', async (req, res) => {  // public — guests need group list too
   try {
     // Return all known groups, merging with channel rows so every group shows up
     const [groupsResult, channelsResult] = await Promise.all([
