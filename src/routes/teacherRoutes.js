@@ -1,6 +1,3 @@
-// Backend: src/routes/teacherRoutes.js
-// REPLACE your entire existing teacherRoutes.js with this file
-
 const express = require('express');
 const router  = express.Router();
 const pool    = require('../config/database');
@@ -45,13 +42,34 @@ router.post('/upsert', authenticateToken, async (req, res) => {
   const { name, telegram_id } = req.body;
   if (!name?.trim()) return res.status(400).json({ success: false, error: 'name is required' });
   try {
-    const result = await pool.query(
-      `INSERT INTO teachers (name, telegram_id)
-       VALUES ($1, $2)
-       ON CONFLICT (name) DO UPDATE SET telegram_id = EXCLUDED.telegram_id
-       RETURNING id, name, telegram_id`,
-      [name.trim(), telegram_id || null]
-    );
+    // Try upsert with ON CONFLICT first
+    let result;
+    try {
+      result = await pool.query(
+        `INSERT INTO teachers (name, telegram_id)
+         VALUES ($1, $2)
+         ON CONFLICT (name) DO UPDATE SET telegram_id = EXCLUDED.telegram_id
+         RETURNING id, name, telegram_id`,
+        [name.trim(), telegram_id || null]
+      );
+    } catch (conflictErr) {
+      // If no unique constraint on name, fall back to SELECT then UPDATE/INSERT
+      const existing = await pool.query(
+        'SELECT id FROM teachers WHERE LOWER(name) = LOWER($1) LIMIT 1',
+        [name.trim()]
+      );
+      if (existing.rows.length > 0) {
+        result = await pool.query(
+          'UPDATE teachers SET telegram_id = $1 WHERE id = $2 RETURNING id, name, telegram_id',
+          [telegram_id || null, existing.rows[0].id]
+        );
+      } else {
+        result = await pool.query(
+          'INSERT INTO teachers (name, telegram_id) VALUES ($1, $2) RETURNING id, name, telegram_id',
+          [name.trim(), telegram_id || null]
+        );
+      }
+    }
     res.json({ success: true, id: result.rows[0].id, data: result.rows[0] });
   } catch (err) {
     console.error('POST /teachers/upsert:', err.message);
