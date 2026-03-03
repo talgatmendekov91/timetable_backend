@@ -94,6 +94,8 @@ app.use('/api/teachers',        teacherRoutes);
 app.use('/api/group-channels',  groupChannelRoutes);
 app.use('/api/groups',          groupChannelRoutes);  // legacy route App.js needs
 app.use('/api/broadcast',       broadcastRoutes);
+const settingsRoutes = require('./routes/settingsRoutes');
+app.use('/api/settings',        settingsRoutes);
 
 // ── 404 handler ────────────────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -144,12 +146,16 @@ const server = app.listen(PORT, () => {
 });
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
+const shutdown = (signal) => {
+  console.log(`${signal} received: closing HTTP server`);
   server.close(() => {
     console.log('HTTP server closed');
     process.exit(0);
   });
-});
+  // Force exit after 10s if server hangs
+  setTimeout(() => process.exit(1), 10000);
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
 module.exports = app;

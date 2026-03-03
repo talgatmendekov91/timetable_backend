@@ -77,8 +77,27 @@ class TelegramNotifier {
   // classData:  { group, day, time, course, teacher, room, duration }
   // oldData:    previous classData (only for 'updated')
 
+  async isNotificationsEnabled() {
+    try {
+      const { rows } = await pool.query(
+        "SELECT value FROM app_settings WHERE key = 'notifications_enabled'"
+      );
+      return rows[0]?.value !== 'false';
+    } catch {
+      return true; // default to enabled if table doesn't exist yet
+    }
+  }
+
   async notifyScheduleChange(changeType, classData, oldData = null) {
     if (!classData) return;
+
+    // Check global notifications master switch
+    const enabled = await this.isNotificationsEnabled();
+    if (!enabled) {
+      console.log('⚠️ Notifications disabled globally — skipping notification');
+      return;
+    }
+
     const { group, teacher } = classData;
 
     // 1. Notify the teacher personally
