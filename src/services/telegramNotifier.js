@@ -84,7 +84,10 @@ class TelegramNotifier {
     // 1. Notify the teacher personally
     try {
       const { rows } = await pool.query(
-        `SELECT telegram_id FROM teachers WHERE LOWER(name) = LOWER($1) AND telegram_id IS NOT NULL`,
+        `SELECT telegram_id FROM teachers
+         WHERE LOWER(name) = LOWER($1)
+           AND telegram_id IS NOT NULL
+           AND notifications_enabled = true`,
         [teacher || '']
       );
       if (rows.length > 0) {

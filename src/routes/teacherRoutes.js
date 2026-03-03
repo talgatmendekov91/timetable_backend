@@ -132,4 +132,21 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// PUT /teachers/:id/notifications — toggle notifications on/off
+router.put('/:id/notifications', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { enabled } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE teachers SET notifications_enabled = $1 WHERE id = $2 RETURNING id, name, notifications_enabled',
+      [enabled === true || enabled === 'true', id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Teacher not found' });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    console.error('PUT /teachers/:id/notifications:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

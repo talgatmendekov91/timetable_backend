@@ -1,116 +1,148 @@
 // src/routes/bookingRoutes.js
 const express = require('express');
-const pool = require('../config/database');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const router = express.Router();
+const router  = express.Router();
+const pool    = require('../config/database');
+const { authenticateToken } = require('../middleware/auth');
 
-// Guest: Submit booking request
-router.post('/', async function(req, res) {
+// ── Auto-delete expired approved bookings ────────────────────────────────────
+// Called on every GET so expired bookings disappear automatically
+const deleteExpiredBookings = async () => {
   try {
-    const { name, email, phone, room, day, startTime, duration, purpose } = req.body;
-    
-    if (!name || !email || !room || !day || !startTime || !duration || !purpose) {
-      return res.status(400).json({ success: false, error: 'All fields required' });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO booking_requests (name, email, phone, room, day, start_time, duration, purpose, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', CURRENT_TIMESTAMP)
-       RETURNING *`,
-      [name, email, phone, room, day, startTime, duration, purpose]
-    );
-
-    res.json({ success: true, data: result.rows[0] });
-  } catch(e) { 
-    res.status(500).json({ success: false, error: e.message }); 
+    // Parse booking end time and compare to current time
+    // booking has day (Monday..Saturday), start_time (HH:MM), end_time (HH:MM)
+    // We delete approved bookings where the day+end_time is in the past
+    await pool.query(`
+      DELETE FROM booking_requests
+      WHERE status = 'approved'
+        AND end_time IS NOT NULL
+        AND (
+          -- Convert day name to a day-of-week offset from Monday
+          CASE day
+            WHEN 'Monday'    THEN 1
+            WHEN 'Tuesday'   THEN 2
+            WHEN 'Wednesday' THEN 3
+            WHEN 'Thursday'  THEN 4
+            WHEN 'Friday'    THEN 5
+            WHEN 'Saturday'  THEN 6
+            ELSE 7
+          END
+        ) <= EXTRACT(DOW FROM NOW())
+        AND end_time::time < NOW()::time
+        AND (
+          CASE day
+            WHEN 'Monday'    THEN 1
+            WHEN 'Tuesday'   THEN 2
+            WHEN 'Wednesday' THEN 3
+            WHEN 'Thursday'  THEN 4
+            WHEN 'Friday'    THEN 5
+            WHEN 'Saturday'  THEN 6
+            ELSE 7
+          END
+        ) = EXTRACT(DOW FROM NOW())
+    `);
+  } catch (e) {
+    // Don't crash the route if cleanup fails
+    console.error('Auto-expire bookings error:', e.message);
   }
-});
+};
 
-// Admin: Get all booking requests
-router.get('/', authenticateToken, requireAdmin, async function(req, res) {
+// Notify admin on new booking
+const notifyAdminNewBooking = async (booking) => {
   try {
+    const adminChatId = process.env.ADMIN_TELEGRAM_CHAT_ID;
+    if (!adminChatId || !process.env.TELEGRAM_BOT_TOKEN) return;
+    const TelegramNotifier = require('../services/telegramNotifier');
+    const notifier = TelegramNotifier.getInstance();
+    const msg =
+      `🏫 <b>New Lab Booking Request</b>\n\n` +
+      `👤 <b>Name:</b> ${booking.guest_name}\n` +
+      `📞 <b>Phone:</b> ${booking.phone || '—'}\n` +
+      `👥 <b>Group:</b> ${booking.group_name}\n` +
+      `📅 <b>Day:</b> ${booking.day}\n` +
+      `⏰ <b>Time:</b> ${booking.start_time}${booking.end_time ? ' – ' + booking.end_time : ''}\n` +
+      `📝 <b>Purpose:</b> ${booking.purpose}\n\n` +
+      `<i>Go to Lab Bookings tab to approve or reject.</i>`;
+    await notifier.sendMessage(adminChatId, msg);
+  } catch (e) {
+    console.error('Admin booking notify error:', e.message);
+  }
+};
+
+// GET all booking requests (public — guests need to see their pending bookings)
+router.get('/', async (req, res) => {
+  try {
+    await deleteExpiredBookings();
     const result = await pool.query(
-      'SELECT * FROM booking_requests ORDER BY created_at DESC'
+      `SELECT * FROM booking_requests ORDER BY created_at DESC`
     );
     res.json({ success: true, data: result.rows });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Admin: Get pending count
-router.get('/pending-count', authenticateToken, requireAdmin, async function(req, res) {
+// POST new booking (public — guests submit)
+router.post('/', async (req, res) => {
   try {
+    const { guest_name, phone, group_name, day, start_time, end_time, purpose, room } = req.body;
+    if (!guest_name || !group_name || !day || !start_time || !purpose)
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+
     const result = await pool.query(
-      "SELECT COUNT(*) as count FROM booking_requests WHERE status = 'pending'"
+      `INSERT INTO booking_requests
+         (guest_name, phone, group_name, day, start_time, end_time, purpose, room, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
+       RETURNING *`,
+      [guest_name, phone || '', group_name, day, start_time, end_time || '', purpose, room || '']
     );
-    res.json({ success: true, count: parseInt(result.rows[0].count) });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
+    const booking = result.rows[0];
+
+    // Notify admin via Telegram
+    await notifyAdminNewBooking(booking);
+
+    res.json({ success: true, data: booking });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Admin: Approve booking (adds to schedule)
-router.post('/:id/approve', authenticateToken, requireAdmin, async function(req, res) {
+// PUT approve/reject (admin only)
+router.put('/:id', authenticateToken, async (req, res) => {
   try {
-    const { id } = req.params;
-    
-    // Get booking details
-    const booking = await pool.query('SELECT * FROM booking_requests WHERE id = $1', [id]);
-    if (booking.rows.length === 0) {
+    const { status } = req.body; // 'approved' | 'rejected'
+    const result = await pool.query(
+      `UPDATE booking_requests SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [status, req.params.id]
+    );
+    if (result.rowCount === 0)
       return res.status(404).json({ success: false, error: 'Booking not found' });
+
+    // If approved and there's a room/time, optionally add to schedule
+    const b = result.rows[0];
+    if (status === 'approved' && b.room && b.group_name && b.day && b.start_time) {
+      try {
+        await pool.query(
+          `INSERT INTO schedules (group_name, day, time, course, teacher, room, subject_type)
+           VALUES ($1,$2,$3,$4,$5,$6,'other')
+           ON CONFLICT (group_name, day, time) DO NOTHING`,
+          [b.group_name, b.day, b.start_time, b.purpose, b.guest_name, b.room]
+        );
+      } catch { /* conflict is fine */ }
     }
 
-    const b = booking.rows[0];
-    
-    // Create a temporary group for booking if needed
-    const groupName = `BOOKING-${b.name.split(' ')[0]}`;
-    await pool.query(
-      'INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING',
-      [groupName]
-    );
-
-    // Add to schedule
-    await pool.query(
-      `INSERT INTO schedules (group_name, day, time, course, teacher, room, subject_type, duration)
-       VALUES ($1, $2, $3, $4, $5, $6, 'other', $7)
-       ON CONFLICT (group_name, day, time) DO UPDATE 
-       SET course = $4, teacher = $5, room = $6, duration = $7`,
-      [groupName, b.day, b.start_time, b.purpose, b.name, b.room, b.duration]
-    );
-
-    // Mark as approved
-    await pool.query(
-      "UPDATE booking_requests SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
-      [id]
-    );
-
-    res.json({ success: true, message: 'Booking approved and added to schedule' });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Admin: Reject booking
-router.post('/:id/reject', authenticateToken, requireAdmin, async function(req, res) {
-  try {
-    await pool.query(
-      "UPDATE booking_requests SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
-      [req.params.id]
-    );
-    res.json({ success: true });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// Admin: Delete booking request
-router.delete('/:id', authenticateToken, requireAdmin, async function(req, res) {
+// DELETE booking (admin only)
+router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     await pool.query('DELETE FROM booking_requests WHERE id = $1', [req.params.id]);
     res.json({ success: true });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
