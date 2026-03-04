@@ -65,12 +65,55 @@ router.put('/:id', authenticateToken, async (req,res) => {
     const { status } = req.body;
     if (!['approved','rejected'].includes(status))
       return res.status(400).json({success:false,error:'Invalid status'});
+
     const r = await pool.query(
       'UPDATE booking_requests SET status=$1,updated_at=NOW() WHERE id=$2 RETURNING *',
       [status, req.params.id]
     );
     if (r.rowCount===0) return res.status(404).json({success:false,error:'Not found'});
-    res.json({ success:true, data:r.rows[0] });
+    const b = r.rows[0];
+
+    // When approved: insert into schedules so it appears on the timetable
+    if (status === 'approved') {
+      try {
+        // Use entity as group label, fall back to booker name
+        const groupName = (b.entity && b.entity.trim()) ? b.entity.trim() : (b.name || 'Booking');
+
+        // Ensure the group exists (create if missing - bookings don't need a pre-registered group)
+        await pool.query(
+          `INSERT INTO groups (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
+          [groupName]
+        );
+
+        // Insert every slot from start_time to end_time inclusive
+        // For simplicity insert start_time slot (one row per booking)
+        await pool.query(
+          `INSERT INTO schedules (group_name, day, time, course, teacher, room, subject_type, duration)
+           VALUES ($1, $2, $3, $4, $5, $6, 'other', 1)
+           ON CONFLICT (group_name, day, time) DO UPDATE
+             SET course=$4, teacher=$5, room=$6, subject_type='other', updated_at=NOW()`,
+          [groupName, b.day, b.start_time, b.purpose, b.name, b.room]
+        );
+
+        console.log(`Booking approved: inserted schedule for ${groupName} on ${b.day} at ${b.start_time}`);
+      } catch (schedErr) {
+        // Log but don't fail the approval
+        console.error('Could not insert booking into schedule:', schedErr.message);
+      }
+    }
+
+    // When rejected or re-rejected: remove from schedule if it was previously approved
+    if (status === 'rejected') {
+      try {
+        const groupName = (b.entity && b.entity.trim()) ? b.entity.trim() : (b.name || 'Booking');
+        await pool.query(
+          `DELETE FROM schedules WHERE group_name=$1 AND day=$2 AND time=$3 AND room=$4`,
+          [groupName, b.day, b.start_time, b.room]
+        );
+      } catch (e) { /* ignore */ }
+    }
+
+    res.json({ success:true, data:b });
   } catch(err) { res.status(500).json({success:false,error:err.message}); }
 });
 
