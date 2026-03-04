@@ -11,8 +11,30 @@ pool.query('ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS end_time VARCH
 
 const deleteExpired = async () => {
   try {
-    await pool.query(`DELETE FROM booking_requests WHERE status='approved' AND end_time IS NOT NULL AND end_time!='' AND EXTRACT(DOW FROM NOW())=CASE day WHEN 'Monday' THEN 1 WHEN 'Tuesday' THEN 2 WHEN 'Wednesday' THEN 3 WHEN 'Thursday' THEN 4 WHEN 'Friday' THEN 5 WHEN 'Saturday' THEN 6 ELSE 0 END AND end_time::time < NOW()::time`);
-  } catch(e) { console.error('Auto-expire:',e.message); }
+    // Find approved bookings whose end_time has passed today
+    const expired = await pool.query(`
+      SELECT id, entity, name, day, start_time, room FROM booking_requests
+      WHERE status = 'approved'
+        AND end_time IS NOT NULL AND end_time != ''
+        AND EXTRACT(DOW FROM NOW()) = CASE day
+          WHEN 'Monday'    THEN 1 WHEN 'Tuesday'   THEN 2 WHEN 'Wednesday' THEN 3
+          WHEN 'Thursday'  THEN 4 WHEN 'Friday'    THEN 5 WHEN 'Saturday'  THEN 6
+          ELSE 0 END
+        AND end_time::time < NOW()::time
+    `);
+
+    for (const b of expired.rows) {
+      const groupName = (b.entity && b.entity.trim()) ? b.entity.trim() : (b.name || 'Booking');
+      // Remove from schedules table
+      await pool.query(
+        `DELETE FROM schedules WHERE group_name=$1 AND day=$2 AND time=$3 AND room=$4`,
+        [groupName, b.day, b.start_time, b.room]
+      );
+      // Remove from booking_requests
+      await pool.query(`DELETE FROM booking_requests WHERE id=$1`, [b.id]);
+      console.log(`Auto-expired booking: ${groupName} ${b.day} ${b.start_time}-${b.room}`);
+    }
+  } catch(e) { console.error('Auto-expire:', e.message); }
 };
 
 const notifyAdmin = async (b) => {
