@@ -62,15 +62,32 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// DELETE a group channel
+// DELETE a group — removes from schedules, groups, and group_channels
 router.delete('/:groupName', authenticateToken, async (req, res) => {
   const groupName = decodeURIComponent(req.params.groupName);
+  const client = await pool.connect();
   try {
-    await pool.query('DELETE FROM group_channels WHERE group_name = $1', [groupName]);
+    await client.query('BEGIN');
+    // 1. Remove all schedule entries for this group
+    await client.query('DELETE FROM schedules WHERE group_name = $1', [groupName]);
+    // 2. Remove from group_channels
+    await client.query('DELETE FROM group_channels WHERE group_name = $1', [groupName]);
+    // 3. Remove from groups table (booking-created groups live here)
+    await client.query('DELETE FROM groups WHERE name = $1', [groupName]);
+    // 4. Also clean up any booking_requests tied to this entity
+    await client.query(
+      "DELETE FROM booking_requests WHERE entity = $1 OR name = $1",
+      [groupName]
+    );
+    await client.query('COMMIT');
+    console.log(`Deleted group + schedules: ${groupName}`);
     res.json({ success: true });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('DELETE group-channels:', err);
     res.status(500).json({ success: false, error: err.message });
+  } finally {
+    client.release();
   }
 });
 
