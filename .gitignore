@@ -31,3 +31,5 @@ coverage/
 # Production
 dist/
 build/
+.env
+.env.example
