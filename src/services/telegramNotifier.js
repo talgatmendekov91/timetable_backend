@@ -4,11 +4,17 @@ const pool = require('../config/database');
 
 class TelegramNotifier {
   constructor() {
+    if (!process.env.TELEGRAM_BOT_TOKEN) {
+      console.warn('⚠️  TelegramNotifier: TELEGRAM_BOT_TOKEN not set — bot disabled');
+      this.bot = null;
+      return;
+    }
     this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
     this.setupBot();
   }
 
   setupBot() {
+    if (!this.bot) return; // no token — skip
     // Wait 3s before launching — gives Railway time to fully kill old instance
     // preventing 409 Conflict: terminated by other getUpdates request
     setTimeout(() => {
@@ -206,7 +212,7 @@ class TelegramNotifier {
   }
 
   stop() {
-    this.bot.stop('SIGTERM');
+    if (this.bot) this.bot.stop('SIGTERM');
   }
 }
 
@@ -214,14 +220,8 @@ class TelegramNotifier {
 let _instance = null;
 
 TelegramNotifier.getInstance = function() {
-  if (!_instance) {
-    _instance = new TelegramNotifier();
-  }
-  return _instance;
-};
-
-TelegramNotifier.getInstance = TelegramNotifier.getInstance || function() {
   if (!_instance) _instance = new TelegramNotifier();
   return _instance;
 };
+
 module.exports = TelegramNotifier;

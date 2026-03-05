@@ -5,6 +5,21 @@ const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
 require('dotenv').config();
 
+// ── Process-level crash guards ─────────────────────────────────────────────────
+// Without these, any unhandled promise rejection silently kills the Node process
+// causing 502 errors on Railway until the container restarts
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('⚠️  Unhandled Rejection at:', promise, 'reason:', reason);
+  // Do NOT exit — keep the server alive
+});
+process.on('uncaughtException', (err) => {
+  console.error('⚠️  Uncaught Exception:', err);
+  // Do NOT exit for non-fatal errors
+  if (err.code === 'ECONNRESET' || err.code === 'EPIPE') return;
+  // Fatal — must exit, but Railway will restart
+  process.exit(1);
+});
+
 // ── Import routes ──────────────────────────────────────────────────────────────
 const authRoutes         = require('./routes/authRoutes');
 const scheduleRoutes     = require('./routes/scheduleRoutes');
@@ -130,18 +145,22 @@ const server = app.listen(PORT, () => {
 ╚═══════════════════════════════════════════════════════╝
   `);
 
-  // Start Telegram notifications
+  // Start Telegram notifications — fully isolated, never crashes the server
   if (startTelegramNotifications) {
     console.log('🔄 Initializing Telegram service...');
     setTimeout(() => {
       try {
-        startTelegramNotifications();
+        const result = startTelegramNotifications();
+        // Handle both sync throws and async rejections
+        if (result && typeof result.catch === 'function') {
+          result.catch(err => console.error('❌ Telegram async error:', err.message));
+        }
       } catch (error) {
-        console.error('❌ Failed to start Telegram service:', error);
+        console.error('❌ Failed to start Telegram service:', error.message);
       }
-    }, 1000);
+    }, 2000); // 2s delay — server fully ready before bot starts
   } else {
-    console.log('⚠️ Telegram service not available');
+    console.log('⚠️ Telegram service not available — server continues without it');
   }
 });
 
