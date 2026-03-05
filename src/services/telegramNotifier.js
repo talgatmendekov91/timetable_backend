@@ -9,19 +9,53 @@ class TelegramNotifier {
   }
 
   setupBot() {
-    // Drop any existing webhook and pending updates before launching
-    // This prevents 409 Conflict when Railway restarts the container
-    this.bot.telegram.deleteWebhook({ drop_pending_updates: true })
-      .then(() => {
-        this.bot.launch({ dropPendingUpdates: true });
-        console.log('✅ Telegram bot started');
-      })
-      .catch((err) => {
-        console.error('Failed to delete webhook:', err.message);
-        // Launch anyway
-        this.bot.launch({ dropPendingUpdates: true });
-        console.log('✅ Telegram bot started (fallback)');
-      });
+    // Wait 3s before launching — gives Railway time to fully kill old instance
+    // preventing 409 Conflict: terminated by other getUpdates request
+    setTimeout(() => {
+      this.bot.telegram.deleteWebhook({ drop_pending_updates: true })
+        .then(() => {
+          this.bot.launch({ dropPendingUpdates: true });
+          console.log('✅ Telegram bot started');
+        })
+        .catch((err) => {
+          console.error('Failed to delete webhook:', err.message);
+          this.bot.launch({ dropPendingUpdates: true });
+          console.log('✅ Telegram bot started (fallback)');
+        });
+    }, 3000);
+
+    // ── Security middleware: rate-limit + unknown user protection ──────────
+    const userLastSeen = {}; // telegramId → timestamp
+    this.bot.use(async (ctx, next) => {
+      const id  = ctx.from?.id;
+      const now = Date.now();
+
+      // Rate limit: max 1 message per 3 seconds per user
+      if (id) {
+        if (userLastSeen[id] && now - userLastSeen[id] < 3000) {
+          return; // silently drop — no reply encourages spammers
+        }
+        userLastSeen[id] = now;
+      }
+
+      // Allow /start for anyone (they need it to get their ID for registration)
+      const isStart = ctx.message?.text?.startsWith('/start');
+      if (isStart) return next();
+
+      // For all other commands: only allow registered teachers
+      if (id) {
+        try {
+          const r = await pool.query(
+            'SELECT id FROM teachers WHERE telegram_id = $1',
+            [id.toString()]
+          );
+          if (r.rows.length > 0) return next(); // registered teacher — allow
+        } catch (e) { /* db error — fail safe, allow */ return next(); }
+      }
+
+      // Unknown user — silently ignore (no reply = no confirmation bot exists)
+      console.log(`Blocked unknown Telegram user: ${id} (@${ctx.from?.username || 'unknown'})`);
+    });
 
     // /start — teacher gets their Telegram ID
     this.bot.command('start', async (ctx) => {
@@ -186,4 +220,8 @@ TelegramNotifier.getInstance = function() {
   return _instance;
 };
 
+TelegramNotifier.getInstance = TelegramNotifier.getInstance || function() {
+  if (!_instance) _instance = new TelegramNotifier();
+  return _instance;
+};
 module.exports = TelegramNotifier;

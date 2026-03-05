@@ -148,12 +148,22 @@ const server = app.listen(PORT, () => {
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
 const shutdown = (signal) => {
   console.log(`${signal} received: closing HTTP server`);
+  // Stop Telegraf bot polling FIRST to avoid 409 conflict on redeploy
+  try {
+    const notifier = require('./services/telegramNotifier');
+    const instance = notifier.getInstance ? notifier.getInstance() : null;
+    if (instance?.bot) {
+      instance.bot.stop(signal);
+      console.log('Telegram bot stopped');
+    }
+  } catch(e) { /* bot may not be running */ }
+
   server.close(() => {
     console.log('HTTP server closed');
     process.exit(0);
   });
-  // Force exit after 10s if server hangs
-  setTimeout(() => process.exit(1), 10000);
+  // Force exit after 5s if server hangs
+  setTimeout(() => process.exit(1), 5000);
 };
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
