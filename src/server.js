@@ -113,6 +113,8 @@ const settingsRoutes = require('./routes/settingsRoutes');
 app.use('/api/settings',        settingsRoutes);
 const examRoutes = require('./routes/examRoutes');
 app.use('/api/exams',           examRoutes);
+const feedbackRoutes = require('./routes/feedbackRoutes');
+app.use('/api/feedback',        feedbackRoutes);
 
 // ── Telegram webhook handler (dynamic — registered once bot is ready) ────────
 let _telegramWebhookMiddleware = null;

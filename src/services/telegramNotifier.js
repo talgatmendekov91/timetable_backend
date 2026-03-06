@@ -11,6 +11,7 @@ class TelegramNotifier {
     }
     this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
     this.setupBot();
+    this.setupFeedback();
   }
 
   setupBot() {
@@ -64,9 +65,9 @@ class TelegramNotifier {
         userLastSeen[id] = now;
       }
 
-      // Allow /start for anyone (they need it to get their ID for registration)
-      const isStart = ctx.message?.text?.startsWith('/start');
-      if (isStart) return next();
+      // Allow /start and /feedback for anyone (public commands)
+      const text = ctx.message?.text || '';
+      if (text.startsWith('/start') || text.startsWith('/feedback')) return next();
 
       // For all other commands: only allow registered teachers
       if (id) {
@@ -244,6 +245,152 @@ Copy this ID into the admin panel for this group.`,
       .filter(([k]) => oldData[k] !== newData[k])
       .map(([k, label]) => `  ${label}: ${oldData[k] || '—'} → ${newData[k] || '—'}`)
       .join('\n');
+  }
+
+  // ── /feedback — multi-step conversation ──────────────────────────────────
+  setupFeedback() {
+    if (!this.bot) return;
+    const API = process.env.REACT_APP_API_URL ||
+                process.env.API_URL           ||
+                'https://timetablebackend-production.up.railway.app/api';
+
+    // In-memory conversation state: telegramId → { step, data }
+    const sessions = {};
+
+    const CATEGORIES = ['🏛 Room', '👨‍🏫 Teacher', '👥 Group', '📝 General'];
+    const CAT_MAP    = { '🏛 Room':'room', '👨‍🏫 Teacher':'teacher', '👥 Group':'group', '📝 General':'general' };
+
+    this.bot.command('feedback', async (ctx) => {
+      const id = ctx.from.id.toString();
+      sessions[id] = { step: 'category', data: {} };
+      await ctx.reply(
+        `📝 <b>Submit Feedback</b>
+
+` +
+        `Your feedback helps improve the schedule and facilities.
+
+` +
+        `<b>Step 1/4</b> — What is your feedback about?`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            keyboard: CATEGORIES.map(c => [{ text: c }]),
+            one_time_keyboard: true,
+            resize_keyboard: true,
+          },
+        }
+      );
+    });
+
+    // Handle conversation steps
+    this.bot.on('text', async (ctx) => {
+      const id   = ctx.from.id.toString();
+      const text = ctx.message.text.trim();
+      const sess = sessions[id];
+      if (!sess) return; // no active session — ignore
+
+      // ── Step 1: category ──────────────────────────────────────────────
+      if (sess.step === 'category') {
+        const catLabel = CATEGORIES.find(c => c === text);
+        if (!catLabel) {
+          return ctx.reply('Please choose one of the options above.');
+        }
+        sess.data.category  = CAT_MAP[catLabel];
+        sess.data.catLabel  = catLabel;
+        sess.step = 'subject';
+
+        let prompt = '';
+        if (sess.data.category === 'room')    prompt = 'Which room? (e.g. B201)';
+        if (sess.data.category === 'teacher') prompt = 'Which teacher? (enter their name)';
+        if (sess.data.category === 'group')   prompt = 'Which group? (e.g. CS-22)';
+        if (sess.data.category === 'general') {
+          sess.data.subject = 'General';
+          sess.step = 'message';
+          return ctx.reply(
+            `<b>Step 3/4</b> — Write your feedback message:`,
+            { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } }
+          );
+        }
+        await ctx.reply(
+          `<b>Step 2/4</b> — ${prompt}`,
+          { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } }
+        );
+
+      // ── Step 2: subject ───────────────────────────────────────────────
+      } else if (sess.step === 'subject') {
+        sess.data.subject = text;
+        sess.step = 'message';
+        await ctx.reply(
+          `<b>Step 3/4</b> — Write your feedback message:
+` +
+          `<i>Example: "Room is always too cold", "Class was cancelled but not updated", "Teacher always late"</i>`,
+          { parse_mode: 'HTML' }
+        );
+
+      // ── Step 3: message ───────────────────────────────────────────────
+      } else if (sess.step === 'message') {
+        if (text.length < 5)
+          return ctx.reply('Please write a more detailed message (at least 5 characters).');
+        sess.data.message = text;
+        sess.step = 'anonymous';
+        await ctx.reply(
+          `<b>Step 4/4</b> — Submit anonymously or with your name?
+
+` +
+          `• <b>Anonymous</b> — admin sees the feedback but not who sent it
+` +
+          `• <b>With name</b> — admin can follow up with you`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              keyboard: [[{ text: '🔒 Anonymous' }, { text: '👤 With my name' }]],
+              one_time_keyboard: true,
+              resize_keyboard: true,
+            },
+          }
+        );
+
+      // ── Step 4: anonymous choice ──────────────────────────────────────
+      } else if (sess.step === 'anonymous') {
+        const isAnon = text.includes('Anonymous') || text.includes('🔒');
+        sess.data.anonymous   = isAnon;
+        sess.data.telegram_id = ctx.from.id.toString();
+        sess.data.sender_name = isAnon ? null
+          : (ctx.from.first_name + (ctx.from.last_name ? ' ' + ctx.from.last_name : '') +
+             (ctx.from.username ? ` (@${ctx.from.username})` : ''));
+
+        // Submit to API
+        try {
+          const res = await fetch(`${API}/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sess.data),
+          });
+          const json = await res.json();
+          if (json.success) {
+            await ctx.reply(
+              `✅ <b>Feedback submitted!</b>
+
+` +
+              `Category: ${sess.data.catLabel}
+` +
+              `About: ${sess.data.subject}
+` +
+              (isAnon ? '🔒 Submitted anonymously' : `👤 Submitted as ${sess.data.sender_name}`) +
+              `
+
+Thank you — your feedback helps improve the university.`,
+              { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } }
+            );
+          } else {
+            await ctx.reply('❌ Failed to submit. Please try again later.');
+          }
+        } catch (e) {
+          await ctx.reply('❌ Server error. Please try again later.');
+        }
+        delete sessions[id]; // clear session
+      }
+    });
   }
 
   stop() {
