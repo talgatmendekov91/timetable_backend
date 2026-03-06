@@ -111,6 +111,8 @@ app.use('/api/groups',          groupChannelRoutes);  // legacy route App.js nee
 app.use('/api/broadcast',       broadcastRoutes);
 const settingsRoutes = require('./routes/settingsRoutes');
 app.use('/api/settings',        settingsRoutes);
+const examRoutes = require('./routes/examRoutes');
+app.use('/api/exams',           examRoutes);
 
 // ── Telegram webhook handler (dynamic — registered once bot is ready) ────────
 let _telegramWebhookMiddleware = null;
