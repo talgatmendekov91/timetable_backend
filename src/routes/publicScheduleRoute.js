@@ -10,17 +10,14 @@ const router  = express.Router();
 const pool    = require('../config/database');
 
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-const TIME_SLOTS = [
-  '8:00','8:30','9:00','9:30','10:00','10:30',
-  '11:00','11:30','12:00','12:30','13:00','13:30',
-  '14:00','14:30','15:00','15:30','16:00','16:30',
-  '17:00','17:30','18:00',
-];
+// TIME_SLOTS derived dynamically from actual DB data — no hardcoding needed
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 const endTime = (start, dur) => {
   const [h, m] = start.split(':').map(Number);
-  const total  = h * 60 + m + (parseInt(dur) || 80);
+  // duration in DB = number of 40-min slots (usually 1 = 40min, 2 = 80min)
+  const mins  = (parseInt(dur) || 1) * 40;
+  const total = h * 60 + m + mins;
   return `${String(Math.floor(total/60)).padStart(2,'0')}:${String(total%60).padStart(2,'0')}`;
 };
 
@@ -243,7 +240,12 @@ router.get('/:group', async (req, res) => {
     // Render day tab content
     const dayTables = DAYS.map(day => {
       const daySlots = schedMap[day] || {};
-      const activeSlots = TIME_SLOTS.filter(t => daySlots[t]);
+      // Use actual times from DB, sorted chronologically
+      const activeSlots = Object.keys(daySlots).sort((a, b) => {
+        const [ah, am] = a.split(':').map(Number);
+        const [bh, bm] = b.split(':').map(Number);
+        return (ah * 60 + am) - (bh * 60 + bm);
+      });
       if (activeSlots.length === 0) return '';
 
       const tableRows = activeSlots.map(time => {
