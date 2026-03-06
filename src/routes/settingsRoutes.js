@@ -1,8 +1,11 @@
+// src/routes/settingsRoutes.js
+// Simple key-value settings table for app-wide config
 const express = require('express');
 const router  = express.Router();
 const pool    = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 
+// Ensure settings table exists
 const ensureTable = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_settings (
@@ -11,14 +14,22 @@ const ensureTable = async () => {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+  // Default: notifications enabled
   await pool.query(`
     INSERT INTO app_settings (key, value)
     VALUES ('notifications_enabled', 'true')
     ON CONFLICT (key) DO NOTHING
   `);
+  // Default: exam schedule hidden from guests
+  await pool.query(`
+    INSERT INTO app_settings (key, value)
+    VALUES ('show_exams_to_guests', 'false')
+    ON CONFLICT (key) DO NOTHING
+  `);
 };
 ensureTable().catch(console.error);
 
+// GET /api/settings/:key  (public — frontend needs to check without login)
 router.get('/:key', async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -30,6 +41,7 @@ router.get('/:key', async (req, res) => {
   }
 });
 
+// PUT /api/settings/:key  (admin only)
 router.put('/:key', authenticateToken, async (req, res) => {
   try {
     const { value } = req.body;
