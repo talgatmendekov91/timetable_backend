@@ -15,20 +15,40 @@ class TelegramNotifier {
 
   setupBot() {
     if (!this.bot) return; // no token — skip
-    // Wait 3s before launching — gives Railway time to fully kill old instance
-    // preventing 409 Conflict: terminated by other getUpdates request
-    setTimeout(() => {
-      this.bot.telegram.deleteWebhook({ drop_pending_updates: true })
-        .then(() => {
-          this.bot.launch({ dropPendingUpdates: true });
-          console.log('✅ Telegram bot started');
-        })
-        .catch((err) => {
-          console.error('Failed to delete webhook:', err.message);
-          this.bot.launch({ dropPendingUpdates: true });
-          console.log('✅ Telegram bot started (fallback)');
-        });
-    }, 3000);
+
+    const webhookDomain = process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : process.env.WEBHOOK_DOMAIN || null;
+
+    if (webhookDomain) {
+      // ── WEBHOOK MODE — no polling, no 409 conflicts ──────────────────────
+      const webhookPath = `/telegram-webhook-${process.env.TELEGRAM_BOT_TOKEN.slice(-10)}`;
+      this.bot.telegram.setWebhook(`${webhookDomain}${webhookPath}`, {
+        drop_pending_updates: true,
+      }).then(() => {
+        console.log(`✅ Telegram webhook set: ${webhookDomain}${webhookPath}`);
+      }).catch(err => {
+        console.error('Failed to set webhook:', err.message);
+      });
+      // Store webhook path so server.js can register the route
+      this.webhookPath   = webhookPath;
+      this.webhookMiddleware = this.bot.webhookCallback(webhookPath);
+      console.log('✅ Telegram bot started (webhook mode)');
+    } else {
+      // ── POLLING MODE fallback (local dev only) ───────────────────────────
+      setTimeout(() => {
+        this.bot.telegram.deleteWebhook({ drop_pending_updates: true })
+          .then(() => this.bot.telegram.callApi('close').catch(() => {}))
+          .then(() => new Promise(r => setTimeout(r, 3000)))
+          .then(() => {
+            this.bot.launch({ dropPendingUpdates: true });
+            console.log('✅ Telegram bot started (polling mode)');
+          })
+          .catch(err => {
+            console.error('Polling launch failed:', err.message);
+          });
+      }, 5000);
+    } // end polling mode
 
     // ── Security middleware: rate-limit + unknown user protection ──────────
     const userLastSeen = {}; // telegramId → timestamp
@@ -61,6 +81,21 @@ class TelegramNotifier {
 
       // Unknown user — silently ignore (no reply = no confirmation bot exists)
       console.log(`Blocked unknown Telegram user: ${id} (@${ctx.from?.username || 'unknown'})`);
+    });
+
+    // /chatid — returns the current chat ID (for group setup verification)
+    this.bot.command('chatid', (ctx) => {
+      const chatId   = ctx.chat?.id;
+      const chatType = ctx.chat?.type;
+      const chatName = ctx.chat?.title || ctx.chat?.username || 'private';
+      ctx.reply(
+        `Chat ID: <code>${chatId}</code>
+Type: ${chatType}
+Name: ${chatName}
+
+Copy this ID into the admin panel for this group.`,
+        { parse_mode: 'HTML' }
+      );
     });
 
     // /start — teacher gets their Telegram ID

@@ -150,15 +150,22 @@ const server = app.listen(PORT, () => {
     console.log('🔄 Initializing Telegram service...');
     setTimeout(() => {
       try {
-        const result = startTelegramNotifications();
-        // Handle both sync throws and async rejections
-        if (result && typeof result.catch === 'function') {
-          result.catch(err => console.error('❌ Telegram async error:', err.message));
-        }
+        startTelegramNotifications();
+        // Register webhook route if bot is in webhook mode
+        try {
+          const { getNotifier } = require('./services/telegramCron');
+          setTimeout(() => {
+            const notifier = getNotifier();
+            if (notifier?.webhookMiddleware && notifier?.webhookPath) {
+              app.use(notifier.webhookPath, notifier.webhookMiddleware);
+              console.log(`✅ Webhook route registered: ${notifier.webhookPath}`);
+            }
+          }, 1000);
+        } catch(e) { /* ignore */ }
       } catch (error) {
         console.error('❌ Failed to start Telegram service:', error.message);
       }
-    }, 2000); // 2s delay — server fully ready before bot starts
+    }, 1000);
   } else {
     console.log('⚠️ Telegram service not available — server continues without it');
   }
