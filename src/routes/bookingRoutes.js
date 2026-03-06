@@ -124,7 +124,7 @@ router.put('/:id', authenticateToken, async (req,res) => {
       }
     }
 
-    // When rejected or re-rejected: remove from schedule if it was previously approved
+    // When rejected: delete from schedule AND delete the booking record entirely
     if (status === 'rejected') {
       try {
         const groupName = (b.entity && b.entity.trim()) ? b.entity.trim() : (b.name || 'Booking');
@@ -133,6 +133,9 @@ router.put('/:id', authenticateToken, async (req,res) => {
           [groupName, b.day, b.start_time, b.room]
         );
       } catch (e) { /* ignore */ }
+      // Delete the booking record itself so it never shows anywhere
+      await pool.query('DELETE FROM booking_requests WHERE id=$1', [req.params.id]);
+      return res.json({ success:true, deleted:true });
     }
 
     res.json({ success:true, data:b });
