@@ -112,6 +112,22 @@ app.use('/api/broadcast',       broadcastRoutes);
 const settingsRoutes = require('./routes/settingsRoutes');
 app.use('/api/settings',        settingsRoutes);
 
+// ── Telegram webhook handler (dynamic — registered once bot is ready) ────────
+let _telegramWebhookMiddleware = null;
+let _telegramWebhookPath       = null;
+app.use((req, res, next) => {
+  if (_telegramWebhookPath && req.path === _telegramWebhookPath && req.method === 'POST') {
+    return _telegramWebhookMiddleware(req, res, next);
+  }
+  next();
+});
+// Called by server startup once bot initializes
+app.setTelegramWebhook = (path, middleware) => {
+  _telegramWebhookPath       = path;
+  _telegramWebhookMiddleware = middleware;
+  console.log(`✅ Telegram webhook route active: ${path}`);
+};
+
 // ── 404 handler ────────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Route not found' });
@@ -157,8 +173,7 @@ const server = app.listen(PORT, () => {
           setTimeout(() => {
             const notifier = getNotifier();
             if (notifier?.webhookMiddleware && notifier?.webhookPath) {
-              app.use(notifier.webhookPath, notifier.webhookMiddleware);
-              console.log(`✅ Webhook route registered: ${notifier.webhookPath}`);
+              app.setTelegramWebhook(notifier.webhookPath, notifier.webhookMiddleware);
             }
           }, 1000);
         } catch(e) { /* ignore */ }
