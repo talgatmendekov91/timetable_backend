@@ -1,388 +1,289 @@
 // src/routes/publicScheduleRoute.js
-// Serves standalone HTML pages — no login needed
-// Routes:
-//   GET /schedule              → index: list all groups
-//   GET /schedule/:group       → group timetable
-//   GET /schedule/dept/:dept   → department filter
-
 const express = require('express');
 const router  = express.Router();
 const pool    = require('../config/database');
 
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-// TIME_SLOTS derived dynamically from actual DB data — no hardcoding needed
 
-// ── Helpers ───────────────────────────────────────────────────────────────
 const endTime = (start, dur) => {
-  const [h, m] = start.split(':').map(Number);
-  // duration in DB = number of 40-min slots (usually 1 = 40min, 2 = 80min)
-  const mins  = (parseInt(dur) || 1) * 40;
-  const total = h * 60 + m + mins;
+  const [h, m] = (start || '0:0').split(':').map(Number);
+  const mins   = (parseInt(dur) || 1) * 40;
+  const total  = h * 60 + m + mins;
   return `${String(Math.floor(total/60)).padStart(2,'0')}:${String(total%60).padStart(2,'0')}`;
 };
 
-const TYPE_COLORS = {
-  lecture: { bg:'#dbeafe', border:'#3b82f6', text:'#1e40af', label:'Lecture' },
-  lab:     { bg:'#dcfce7', border:'#22c55e', text:'#166534', label:'Lab'     },
-  seminar: { bg:'#fef3c7', border:'#f59e0b', text:'#92400e', label:'Seminar' },
-  default: { bg:'#f1f5f9', border:'#94a3b8', text:'#475569', label:''        },
+const TYPE_STYLE = {
+  lecture: { bg:'#dbeafe', border:'#3b82f6', label:'Lecture' },
+  lab:     { bg:'#dcfce7', border:'#22c55e', label:'Lab'     },
+  seminar: { bg:'#fef3c7', border:'#f59e0b', label:'Seminar' },
 };
+const getStyle = (t) => TYPE_STYLE[t] || { bg:'#f1f5f9', border:'#94a3b8', label:'' };
 
-const getColor = (type) => TYPE_COLORS[type] || TYPE_COLORS.default;
+const getDept = (g) => (g || '').split(/[-_\d]/)[0].trim().toUpperCase() || 'OTHER';
 
-// Dept guessed from group name prefix (e.g. "CS-22" → "CS")
-const getDept = (group) => (group || '').split(/[-_\d]/)[0].trim().toUpperCase();
+// ── CSS shared by all pages ───────────────────────────────────────────────
+const CSS = `
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Outfit',system-ui,sans-serif;background:#f0f4f8;color:#0f172a;min-height:100vh}
+  a{color:inherit;text-decoration:none}
+  .nav{background:linear-gradient(135deg,#0f172a,#1e1b4b);padding:0 24px;display:flex;align-items:center;gap:12px;height:54px;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(0,0,0,.3)}
+  .nav-logo{font-size:1rem;font-weight:900;color:#fff;display:flex;align-items:center;gap:8px}
+  .nav-pill{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:.6rem;font-weight:800;padding:2px 8px;border-radius:99px}
+  .nav-sp{flex:1}
+  .nav-link{color:#94a3b8;font-size:.8rem;font-weight:600;padding:6px 12px;border-radius:8px;transition:background .14s}
+  .nav-link:hover{background:rgba(255,255,255,.1);color:#fff}
+  .page{max-width:900px;margin:0 auto;padding:24px 16px 60px}
+  .crumb{font-size:.72rem;color:#94a3b8;margin-bottom:10px}
+  .crumb a{color:#6366f1}
+  .crumb a:hover{text-decoration:underline}
+  .ph-title{font-size:1.5rem;font-weight:900;margin-bottom:4px}
+  .ph-sub{font-size:.82rem;color:#64748b}
+  .ph{margin-bottom:20px}
+  /* Index */
+  .search{width:100%;padding:10px 16px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:.9rem;font-family:inherit;outline:none;background:#fff;margin-bottom:20px}
+  .search:focus{border-color:#6366f1}
+  .dept-title{font-size:.68rem;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;padding-bottom:5px;border-bottom:2px solid #e2e8f0}
+  .dept{margin-bottom:28px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+  .gcard{display:block;background:#fff;border:1.5px solid #e8ecf2;border-radius:12px;padding:14px 10px;text-align:center;font-weight:700;font-size:.88rem;color:#0f172a;transition:all .14s}
+  .gcard:hover{border-color:#6366f1;background:#eef2ff;color:#4f46e5;transform:translateY(-2px);box-shadow:0 4px 16px rgba(99,102,241,.15)}
+  .gcard-sub{font-size:.62rem;color:#94a3b8;font-weight:500;margin-top:3px}
+  /* Schedule */
+  .share-bar{background:#fff;border:1.5px solid #e8ecf2;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .share-url{flex:1;font-size:.75rem;color:#6366f1;font-family:monospace;background:#eef2ff;padding:5px 10px;border-radius:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .share-copy{padding:6px 14px;background:#6366f1;color:#fff;border:none;border-radius:7px;font-size:.75rem;font-weight:700;cursor:pointer;white-space:nowrap}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .tab{padding:7px 18px;background:#fff;border:1.5px solid #e2e8f0;border-radius:99px;font-size:.8rem;font-weight:700;cursor:pointer;transition:all .14s;font-family:inherit;color:#475569}
+  .tab:hover{border-color:#6366f1;color:#4f46e5}
+  .tab.active{background:#6366f1;color:#fff;border-color:#6366f1}
+  .panel{display:none}
+  .panel.visible{display:block}
+  table{width:100%;border-collapse:collapse;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.06)}
+  th{background:#1e293b;color:#fff;padding:10px 14px;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;font-weight:700;text-align:left}
+  td{padding:0;border-bottom:1px solid #f1f5f9;vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  .tc{padding:10px 14px;font-size:.78rem;font-weight:700;color:#64748b;white-space:nowrap;width:80px;background:#f8fafc;border-right:1px solid #f1f5f9}
+  .tc-end{font-size:.62rem;color:#94a3b8;margin-top:2px}
+  .cc{padding:8px 10px}
+  .cb{padding:8px 10px;border-radius:8px;border-left:3px solid;position:relative}
+  .cn{font-size:.85rem;font-weight:800;color:#0f172a;margin-bottom:2px}
+  .cm{font-size:.72rem;color:#64748b;display:flex;flex-wrap:wrap;gap:8px;margin-top:3px}
+  .badge{font-size:.58rem;font-weight:700;padding:1px 7px;border-radius:99px;position:absolute;top:6px;right:6px;color:#fff}
+  /* Mobile */
+  @media(max-width:650px){
+    table{display:none}
+    .mob{display:flex;flex-direction:column;gap:8px}
+    .ms{background:#fff;border:1.5px solid #e8ecf2;border-radius:12px;overflow:hidden;display:flex}
+    .mt{background:#1e293b;color:#fff;padding:10px 8px;font-size:.72rem;font-weight:800;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:56px;gap:1px}
+    .mt-e{color:#64748b;font-size:.6rem}
+    .mc{padding:10px 12px;flex:1;border-left:3px solid}
+  }
+  @media(min-width:651px){.mob{display:none}}
+  .footer{text-align:center;padding:32px 0 16px;color:#94a3b8;font-size:.72rem}
+  .footer strong{color:#6366f1}
+  .empty{text-align:center;padding:48px;color:#94a3b8}
+`;
 
-// ── Shared HTML shell ─────────────────────────────────────────────────────
-const shell = (title, bodyContent, extraHead = '') => `<!DOCTYPE html>
+// ── HTML shell ─────────────────────────────────────────────────────────────
+const page = (title, body) => `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>${title} — Alatoo Schedule</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
-  ${extraHead}
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:'Outfit',sans-serif;background:#f0f4f8;color:#0f172a;min-height:100vh}
-
-    /* Nav */
-    .nav{background:linear-gradient(135deg,#0f172a,#1e1b4b);padding:0 24px;display:flex;align-items:center;gap:16px;height:56px;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(0,0,0,.3)}
-    .nav-logo{font-size:1.1rem;font-weight:900;color:#fff;text-decoration:none;display:flex;align-items:center;gap:8px}
-    .nav-badge{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:.65rem;font-weight:800;padding:2px 8px;border-radius:99px}
-    .nav-spacer{flex:1}
-    .nav-link{color:#94a3b8;text-decoration:none;font-size:.8rem;font-weight:600;padding:6px 12px;border-radius:8px;transition:all .14s}
-    .nav-link:hover{background:rgba(255,255,255,.1);color:#fff}
-
-    /* Page wrapper */
-    .page{max-width:1100px;margin:0 auto;padding:24px 16px 60px}
-
-    /* Page header */
-    .page-header{margin-bottom:20px}
-    .page-title{font-size:1.6rem;font-weight:900;color:#0f172a}
-    .page-sub{font-size:.85rem;color:#64748b;margin-top:4px}
-    .breadcrumb{font-size:.75rem;color:#94a3b8;margin-bottom:8px}
-    .breadcrumb a{color:#6366f1;text-decoration:none}
-    .breadcrumb a:hover{text-decoration:underline}
-
-    /* ── Index page ── */
-    .dept-section{margin-bottom:32px}
-    .dept-title{font-size:.7rem;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e2e8f0}
-    .group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
-    .group-card{background:#fff;border:1.5px solid #e8ecf2;border-radius:12px;padding:14px 12px;text-align:center;text-decoration:none;color:#0f172a;font-weight:700;font-size:.9rem;transition:all .14s;display:block}
-    .group-card:hover{border-color:#6366f1;background:#eef2ff;color:#4f46e5;transform:translateY(-2px);box-shadow:0 4px 16px rgba(99,102,241,.15)}
-
-    /* Search */
-    .search-wrap{margin-bottom:20px}
-    .search-input{width:100%;padding:10px 16px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:.9rem;font-family:inherit;outline:none;background:#fff;transition:border-color .14s}
-    .search-input:focus{border-color:#6366f1}
-
-    /* ── Schedule table ── */
-    .day-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
-    .day-tab{padding:7px 16px;background:#fff;border:1.5px solid #e2e8f0;border-radius:99px;font-size:.8rem;font-weight:700;cursor:pointer;transition:all .14s;font-family:inherit}
-    .day-tab:hover{border-color:#6366f1;color:#4f46e5}
-    .day-tab.active{background:#6366f1;color:#fff;border-color:#6366f1}
-
-    .schedule-table{width:100%;border-collapse:collapse;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.06)}
-    .schedule-table th{background:#1e293b;color:#fff;padding:10px 14px;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;font-weight:700;text-align:left}
-    .schedule-table td{padding:0;border-bottom:1px solid #f1f5f9;vertical-align:top}
-    .schedule-table tr:last-child td{border-bottom:none}
-    .time-cell{padding:12px 14px;font-size:.8rem;font-weight:700;color:#64748b;white-space:nowrap;width:90px;background:#f8fafc;border-right:1px solid #f1f5f9}
-
-    .class-cell{padding:8px 10px;min-height:56px}
-    .class-block{padding:8px 10px;border-radius:8px;border-left:3px solid;position:relative}
-    .class-name{font-size:.85rem;font-weight:800;color:#0f172a;margin-bottom:3px}
-    .class-meta{font-size:.72rem;color:#64748b;display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
-    .class-meta span{display:flex;align-items:center;gap:3px}
-    .class-badge{font-size:.6rem;font-weight:700;padding:1px 7px;border-radius:99px;position:absolute;top:6px;right:6px}
-    .empty-cell{color:#e2e8f0;font-size:.7rem;padding:16px 10px;text-align:center}
-
-    /* Mobile */
-    .mobile-day-view{display:none}
-    @media(max-width:700px){
-      .schedule-table{display:none}
-      .mobile-day-view{display:block}
-      .mobile-slot{background:#fff;border:1.5px solid #e8ecf2;border-radius:12px;margin-bottom:8px;overflow:hidden;display:flex}
-      .mobile-time{background:#1e293b;color:#fff;padding:12px 10px;font-size:.75rem;font-weight:800;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:60px;gap:2px}
-      .mobile-time-end{color:#64748b;font-size:.65rem}
-      .mobile-content{padding:12px;flex:1}
-      .mobile-empty{color:#94a3b8;font-size:.78rem}
-    }
-
-    /* Share bar */
-    .share-bar{background:#fff;border:1.5px solid #e8ecf2;border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-    .share-url{flex:1;font-size:.78rem;color:#6366f1;font-family:monospace;background:#eef2ff;padding:6px 10px;border-radius:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .share-copy{padding:7px 14px;background:#6366f1;color:#fff;border:none;border-radius:8px;font-size:.78rem;font-weight:700;cursor:pointer;font-family:inherit;transition:opacity .14s}
-    .share-copy:hover{opacity:.85}
-
-    /* Footer */
-    .footer{text-align:center;padding:32px 16px 16px;color:#94a3b8;font-size:.75rem}
-    .footer strong{color:#6366f1}
-
-    /* Loading */
-    .loading{text-align:center;padding:60px;color:#94a3b8;font-size:.9rem}
-  </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>${title} — Alatoo Schedule</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet"/>
+<style>${CSS}</style>
 </head>
 <body>
-  <nav class="nav">
-    <a class="nav-logo" href="/schedule">🏛 <span>Alatoo</span> <span class="nav-badge">Schedule</span></a>
-    <div class="nav-spacer"></div>
-    <a class="nav-link" href="/schedule">All Groups</a>
-  </nav>
-  <div class="page">
-    ${bodyContent}
-  </div>
-  <footer class="footer">
-    <strong>Alatoo International University</strong> · Bishkek, Kyrgyzstan · ${new Date().getFullYear()}
-    <br/>Schedule updates automatically · <a href="/schedule" style="color:#6366f1">View all groups</a>
-  </footer>
+<nav class="nav">
+  <a class="nav-logo" href="/schedule">🏛 Alatoo <span class="nav-pill">Schedule</span></a>
+  <div class="nav-sp"></div>
+  <a class="nav-link" href="/schedule">All Groups</a>
+</nav>
+<div class="page">${body}</div>
+<footer class="footer"><strong>Alatoo International University</strong> · Bishkek · Schedule is always up to date</footer>
 </body>
 </html>`;
 
-// ── GET /schedule — Group index ───────────────────────────────────────────
-router.get('/', async (req, res) => {
-  try {
-    const [groupsRes, schedRes] = await Promise.all([
-      pool.query('SELECT name AS group_name FROM groups ORDER BY name'),
-      pool.query('SELECT group_name, COUNT(*) as class_count FROM schedules GROUP BY group_name'),
-    ]);
-
-    const classCounts = {};
-    schedRes.rows.forEach(r => { classCounts[r.group_name] = parseInt(r.class_count); });
-
-    const groups = groupsRes.rows.map(r => r.group_name);
-
-    // Group by department prefix
-    const depts = {};
-    groups.forEach(g => {
-      const dept = getDept(g);
-      if (!depts[dept]) depts[dept] = [];
-      depts[dept].push(g);
-    });
-
-    const deptSections = Object.entries(depts).sort(([a],[b]) => a.localeCompare(b)).map(([dept, grps]) => `
-      <div class="dept-section">
-        <div class="dept-title">${dept} — ${grps.length} group${grps.length > 1 ? 's' : ''}</div>
-        <div class="group-grid">
-          ${grps.map(g => `
-            <a class="group-card" href="/schedule/${encodeURIComponent(g)}">
-              ${g}
-              ${classCounts[g] ? `<div style="font-size:.65rem;color:#94a3b8;font-weight:500;margin-top:3px">${classCounts[g]} classes/week</div>` : ''}
-            </a>
-          `).join('')}
-        </div>
-      </div>
-    `).join('');
-
-    const body = `
-      <div class="page-header">
-        <div class="page-title">📅 Class Schedule</div>
-        <div class="page-sub">Alatoo International University · ${groups.length} groups · Select your group to view the timetable</div>
-      </div>
-      <div class="search-wrap">
-        <input class="search-input" id="search" placeholder="🔍 Search group... (e.g. CS-22, IE-23)" oninput="filterGroups(this.value)" />
-      </div>
-      <div id="groups-container">${deptSections}</div>
-      <script>
-        function filterGroups(val) {
-          const v = val.toLowerCase();
-          document.querySelectorAll('.group-card').forEach(card => {
-            const show = !v || card.textContent.toLowerCase().includes(v);
-            card.closest('.group-card').style.display = show ? '' : 'none';
-          });
-          document.querySelectorAll('.dept-section').forEach(sec => {
-            const anyVisible = [...sec.querySelectorAll('.group-card')].some(c => c.style.display !== 'none');
-            sec.style.display = anyVisible ? '' : 'none';
-          });
-        }
-      </script>
-    `;
-    res.send(shell('All Groups', body));
-  } catch (err) {
-    res.status(500).send(`<pre>Error: ${err.message}</pre>`);
-  }
-});
-
-// ── GET /schedule/debug/:group — raw JSON for debugging ──────────────────
+// ── GET /schedule/debug/:group ─────────────────────────────────────────────
 router.get('/debug/:group', async (req, res) => {
-  const groupName = decodeURIComponent(req.params.group);
+  const g = decodeURIComponent(req.params.group);
   try {
-    const result = await pool.query(
-      'SELECT day, time, course, teacher, room, subject_type, duration FROM schedules WHERE group_name = $1 ORDER BY day, time',
-      [groupName]
+    const r = await pool.query(
+      'SELECT day,time,course,teacher,room,subject_type,duration FROM schedules WHERE group_name=$1 ORDER BY day,time',
+      [g]
     );
     res.json({
-      group: groupName,
-      count: result.rows.length,
-      sample: result.rows.slice(0, 5),
-      days: [...new Set(result.rows.map(r => r.day))],
-      times: [...new Set(result.rows.map(r => r.time))].sort(),
+      group: g, count: r.rows.length,
+      days:  [...new Set(r.rows.map(x => x.day))],
+      times: [...new Set(r.rows.map(x => x.time))].sort(),
+      sample: r.rows.slice(0,3),
     });
-  } catch (err) {
-    res.json({ error: err.message });
-  }
+  } catch(e) { res.json({error:e.message}); }
 });
 
-// ── GET /schedule/:group — Group timetable ────────────────────────────────
+// ── GET /schedule ─────────────────────────────────────────────────────────
+router.get('/', async (req, res) => {
+  try {
+    const [gRes, cRes] = await Promise.all([
+      pool.query('SELECT name AS group_name FROM groups ORDER BY name'),
+      pool.query('SELECT group_name, COUNT(*) AS cnt FROM schedules GROUP BY group_name'),
+    ]);
+    const counts = {};
+    cRes.rows.forEach(r => { counts[r.group_name] = parseInt(r.cnt); });
+
+    const depts = {};
+    gRes.rows.forEach(({group_name: g}) => {
+      const d = getDept(g);
+      if (!depts[d]) depts[d] = [];
+      depts[d].push(g);
+    });
+
+    const sections = Object.entries(depts).sort(([a],[b]) => a.localeCompare(b)).map(([d, gs]) => `
+      <div class="dept" data-dept="${d}">
+        <div class="dept-title">${d} &mdash; ${gs.length} group${gs.length>1?'s':''}</div>
+        <div class="grid">
+          ${gs.map(g => `
+            <a class="gcard" href="/schedule/${encodeURIComponent(g)}">
+              ${g}
+              ${counts[g] ? `<div class="gcard-sub">${counts[g]} classes/week</div>` : ''}
+            </a>`).join('')}
+        </div>
+      </div>`).join('');
+
+    const body = `
+      <div class="ph">
+        <div class="ph-title">📅 Class Schedule</div>
+        <div class="ph-sub">Alatoo International University &mdash; ${gRes.rows.length} groups &mdash; select your group</div>
+      </div>
+      <input class="search" placeholder="🔍 Search group... (e.g. CS-22)" oninput="filterGroups(this.value)" />
+      <div id="gc">${sections}</div>
+      <script>
+        function filterGroups(v) {
+          v = v.toLowerCase();
+          document.querySelectorAll('.gcard').forEach(c => {
+            c.style.display = (!v || c.textContent.toLowerCase().includes(v)) ? '' : 'none';
+          });
+          document.querySelectorAll('.dept').forEach(d => {
+            d.style.display = [...d.querySelectorAll('.gcard')].some(c=>c.style.display!=='none') ? '' : 'none';
+          });
+        }
+      </script>`;
+
+    res.send(page('All Groups', body));
+  } catch(e) { res.status(500).send(`<pre>${e.message}</pre>`); }
+});
+
+// ── GET /schedule/:group ──────────────────────────────────────────────────
 router.get('/:group', async (req, res) => {
   const groupName = decodeURIComponent(req.params.group);
   try {
     const result = await pool.query(
-      `SELECT day, time, course, teacher, room, subject_type, duration
-       FROM schedules WHERE group_name = $1 ORDER BY day, time`,
+      'SELECT day,time,course,teacher,room,subject_type,duration FROM schedules WHERE group_name=$1 ORDER BY day,time',
       [groupName]
     );
 
     if (result.rows.length === 0) {
-      const body = `
-        <div class="breadcrumb"><a href="/schedule">← All Groups</a></div>
-        <div class="page-header">
-          <div class="page-title">Group not found</div>
-          <div class="page-sub">No schedule found for "${groupName}"</div>
-        </div>
-        <a href="/schedule" style="color:#6366f1;font-weight:700">← Back to all groups</a>
-      `;
-      return res.status(404).send(shell('Not Found', body));
+      return res.status(404).send(page('Not Found', `
+        <div class="crumb"><a href="/schedule">← All Groups</a></div>
+        <div class="ph"><div class="ph-title">Group not found</div>
+        <div class="ph-sub">No schedule found for "${groupName}"</div></div>
+        <a href="/schedule" style="color:#6366f1;font-weight:700">← Back</a>`));
     }
 
-    // Build schedule map: day → time → entry
-    const schedMap = {};
-    DAYS.forEach(d => { schedMap[d] = {}; });
+    // Group rows by day
+    const byDay = {};
+    DAYS.forEach(d => { byDay[d] = []; });
     result.rows.forEach(row => {
-      if (!schedMap[row.day]) schedMap[row.day] = {};
-      schedMap[row.day][row.time] = row;
+      if (!byDay[row.day]) byDay[row.day] = [];
+      byDay[row.day].push(row);
     });
 
-    // Find active days
-    const activeDays = DAYS.filter(d => Object.keys(schedMap[d] || {}).length > 0);
-    console.log(`[PublicSchedule] ${groupName}: ${result.rows.length} rows, activeDays: ${JSON.stringify(activeDays)}, sampleDays: ${JSON.stringify([...new Set(result.rows.map(r=>r.day))])}`);
+    const activeDays = DAYS.filter(d => byDay[d].length > 0);
 
-    // Render day tab content
-    const dayTables = DAYS.map(day => {
-      const daySlots = schedMap[day] || {};
-      // Use actual times from DB, sorted chronologically
-      const activeSlots = Object.keys(daySlots).sort((a, b) => {
-        const [ah, am] = a.split(':').map(Number);
-        const [bh, bm] = b.split(':').map(Number);
-        return (ah * 60 + am) - (bh * 60 + bm);
-      });
-      if (activeSlots.length === 0) return '';
-
-      const tableRows = activeSlots.map(time => {
-        const e   = daySlots[time];
-        const col = getColor(e.subject_type);
-        return `
-          <tr>
-            <td class="time-cell">
-              ${time}
-              <div style="font-size:.65rem;color:#94a3b8;margin-top:2px">${endTime(time, e.duration)}</div>
-            </td>
-            <td class="class-cell">
-              <div class="class-block" style="background:${col.bg};border-left-color:${col.border}">
-                ${col.label ? `<span class="class-badge" style="background:${col.border};color:#fff">${col.label}</span>` : ''}
-                <div class="class-name">${e.course || '—'}</div>
-                <div class="class-meta">
-                  ${e.teacher ? `<span>👨‍🏫 ${e.teacher}</span>` : ''}
-                  ${e.room    ? `<span>🚪 ${e.room}</span>`    : ''}
-                </div>
-              </div>
-            </td>
-          </tr>`;
-      }).join('');
-
-      const mobileSlots = activeSlots.map(time => {
-        const e   = daySlots[time];
-        const col = getColor(e.subject_type);
-        return `
-          <div class="mobile-slot">
-            <div class="mobile-time">
-              <span>${time}</span>
-              <span class="mobile-time-end">${endTime(time, e.duration)}</span>
-            </div>
-            <div class="mobile-content" style="border-left:3px solid ${col.border}">
-              <div class="class-name">${e.course || '—'}</div>
-              <div class="class-meta">
-                ${e.teacher ? `<span>👨‍🏫 ${e.teacher}</span>` : ''}
-                ${e.room    ? `<span>🚪 ${e.room}</span>` : ''}
-              </div>
-            </div>
-          </div>`;
-      }).join('');
-
-      return `
-        <div class="day-panel" id="day-${day}" style="display:none">
-          <table class="schedule-table">
-            <thead><tr><th>Time</th><th>Class</th></tr></thead>
-            <tbody>${tableRows}</tbody>
-          </table>
-          <div class="mobile-day-view">${mobileSlots}</div>
-        </div>`;
-    }).join('');
-
-    const dayTabButtons = activeDays.map((day, i) =>
-      `<button class="day-tab${i === 0 ? ' active' : ''}" onclick="switchDay('${day}')">${day.slice(0,3)}</button>`
+    // Build tab buttons HTML
+    const tabsHtml = activeDays.map((d, i) =>
+      `<button class="tab${i===0?' active':''}" data-day="${d}">${d.slice(0,3)}</button>`
     ).join('');
 
+    // Build panels HTML — first one has class "visible"
+    const panelsHtml = activeDays.map((day, i) => {
+      const rows = byDay[day].sort((a,b) => {
+        const [ah,am] = a.time.split(':').map(Number);
+        const [bh,bm] = b.time.split(':').map(Number);
+        return (ah*60+am)-(bh*60+bm);
+      });
+
+      const trs = rows.map(e => {
+        const s = getStyle(e.subject_type);
+        return `<tr>
+          <td class="tc">${e.time}<div class="tc-end">${endTime(e.time,e.duration)}</div></td>
+          <td class="cc"><div class="cb" style="background:${s.bg};border-left-color:${s.border}">
+            ${s.label ? `<span class="badge" style="background:${s.border}">${s.label}</span>` : ''}
+            <div class="cn">${e.course||'—'}</div>
+            <div class="cm">
+              ${e.teacher?`<span>👨‍🏫 ${e.teacher}</span>`:''}
+              ${e.room?`<span>🚪 ${e.room}</span>`:''}
+            </div>
+          </div></td>
+        </tr>`;
+      }).join('');
+
+      const mobs = rows.map(e => {
+        const s = getStyle(e.subject_type);
+        return `<div class="ms">
+          <div class="mt">${e.time}<span class="mt-e">${endTime(e.time,e.duration)}</span></div>
+          <div class="mc" style="border-left-color:${s.border}">
+            <div class="cn">${e.course||'—'}</div>
+            <div class="cm">
+              ${e.teacher?`<span>👨‍🏫 ${e.teacher}</span>`:''}
+              ${e.room?`<span>🚪 ${e.room}</span>`:''}
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+
+      return `<div class="panel${i===0?' visible':''}" data-day="${day}">
+        <table><thead><tr><th>Time</th><th>Class</th></tr></thead><tbody>${trs}</tbody></table>
+        <div class="mob">${mobs}</div>
+      </div>`;
+    }).join('');
+
     const currentUrl = `${req.protocol}://${req.get('host')}/schedule/${encodeURIComponent(groupName)}`;
-    const totalClasses = result.rows.length;
-    const workDays = activeDays.length;
 
     const body = `
-      <div class="breadcrumb"><a href="/schedule">← All Groups</a></div>
-      <div class="page-header">
-        <div class="page-title">📅 ${groupName}</div>
-        <div class="page-sub">${totalClasses} classes · ${workDays} day${workDays !== 1 ? 's' : ''} per week</div>
+      <div class="crumb"><a href="/schedule">← All Groups</a></div>
+      <div class="ph">
+        <div class="ph-title">📅 ${groupName}</div>
+        <div class="ph-sub">${result.rows.length} classes &mdash; ${activeDays.length} days per week</div>
       </div>
-
       <div class="share-bar">
-        <span style="font-size:.78rem;font-weight:700;color:#64748b">🔗 Shareable link:</span>
+        <span style="font-size:.75rem;font-weight:700;color:#64748b">🔗 Share:</span>
         <span class="share-url">${currentUrl}</span>
-        <button class="share-copy" onclick="copyLink('${currentUrl}', this)">Copy Link</button>
+        <button class="share-copy" onclick="var b=this;navigator.clipboard.writeText('${currentUrl}').then(()=>{b.textContent='✓ Copied!';setTimeout(()=>b.textContent='Copy',2000)})">Copy</button>
       </div>
-
-      <div class="day-tabs">${dayTabButtons}</div>
-      ${dayTables}
-
+      <div class="tabs">${tabsHtml}</div>
+      ${panelsHtml}
       <script>
-        const activeDays = ${JSON.stringify(activeDays)};
-
-        function switchDay(day) {
-          document.querySelectorAll('.day-panel').forEach(p => p.style.display = 'none');
-          document.querySelectorAll('.day-tab').forEach(b => b.classList.remove('active'));
-          const panel = document.getElementById('day-' + day);
-          if (panel) panel.style.display = 'block';
-          event.target.classList.add('active');
-        }
-
-        function copyLink(url, btn) {
-          navigator.clipboard.writeText(url).then(() => {
-            btn.textContent = '✓ Copied!';
-            setTimeout(() => btn.textContent = 'Copy Link', 2000);
+        document.querySelectorAll('.tab').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            document.querySelectorAll('.tab').forEach(function(b){ b.classList.remove('active'); });
+            document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('visible'); });
+            btn.classList.add('active');
+            var day = btn.getAttribute('data-day');
+            var panel = document.querySelector('.panel[data-day="' + day + '"]');
+            if (panel) panel.classList.add('visible');
           });
-        }
+        });
+        // Auto-switch to today if available
+        var dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        var today = dayNames[new Date().getDay()];
+        var todayBtn = document.querySelector('.tab[data-day="' + today + '"]');
+        if (todayBtn) todayBtn.click();
+      </script>`;
 
-        // Show today's day or first active day
-        const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-        const today    = dayNames[new Date().getDay()];
-        const showDay  = activeDays.includes(today) ? today : activeDays[0];
-        if (showDay) {
-          document.querySelectorAll('.day-panel').forEach(p => p.style.display = 'none');
-          const panel = document.getElementById('day-' + showDay);
-          if (panel) panel.style.display = 'block';
-          document.querySelectorAll('.day-tab').forEach(b => {
-            b.classList.toggle('active', b.textContent === showDay.slice(0,3));
-          });
-        } else if (activeDays.length > 0) {
-          document.getElementById('day-' + activeDays[0]).style.display = 'block';
-        }
-      </script>
-    `;
-
-    res.send(shell(`${groupName} Schedule`, body));
-  } catch (err) {
-    res.status(500).send(`<pre>Error: ${err.message}</pre>`);
-  }
+    res.send(page(groupName + ' Schedule', body));
+  } catch(e) { res.status(500).send(`<pre>${e.message}</pre>`); }
 });
 
 module.exports = router;
