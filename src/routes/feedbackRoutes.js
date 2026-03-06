@@ -14,10 +14,13 @@ pool.query(`
     anonymous     BOOLEAN NOT NULL DEFAULT true,
     telegram_id   TEXT,              -- null if anonymous
     sender_name   TEXT,              -- null if anonymous
+    sender_email  TEXT,              -- null if anonymous
     status        TEXT    NOT NULL DEFAULT 'new',  -- 'new' | 'read' | 'resolved'
     created_at    TIMESTAMPTZ DEFAULT NOW()
   )
-`).catch(err => console.error('feedback table init:', err.message));
+`).then(() =>
+  pool.query('ALTER TABLE feedback ADD COLUMN IF NOT EXISTS sender_email TEXT')
+).catch(err => console.error('feedback table init:', err.message));
 
 // GET all feedback (admin only) — optional filters: category, subject, status
 router.get('/', authenticateToken, async (req, res) => {
@@ -65,18 +68,19 @@ router.get('/stats', authenticateToken, async (req, res) => {
 
 // POST — submit feedback (public — from bot or web)
 router.post('/', async (req, res) => {
-  const { category, subject, message, anonymous, telegram_id, sender_name } = req.body;
+  const { category, subject, message, anonymous, telegram_id, sender_name, sender_email } = req.body;
   if (!category || !subject || !message?.trim())
     return res.status(400).json({ success: false, error: 'category, subject, message required' });
   try {
     const isAnon = anonymous !== false;
     const result = await pool.query(
-      `INSERT INTO feedback (category, subject, message, anonymous, telegram_id, sender_name)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      `INSERT INTO feedback (category, subject, message, anonymous, telegram_id, sender_name, sender_email)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [
         category, subject, message.trim(), isAnon,
         isAnon ? null : (telegram_id || null),
         isAnon ? null : (sender_name || null),
+        isAnon ? null : (sender_email || null),
       ]
     );
     res.json({ success: true, data: result.rows[0] });
