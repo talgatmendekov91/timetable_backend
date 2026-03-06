@@ -164,6 +164,10 @@ try {
   });
 }
 
+// ── Public schedule pages (no auth) ───────────────────────────────────────
+const publicScheduleRoute = require('./routes/publicScheduleRoute');
+app.use('/schedule', publicScheduleRoute);
+
 // ── Telegram webhook handler (dynamic — registered once bot is ready) ────────
 let _telegramWebhookMiddleware = null;
 let _telegramWebhookPath       = null;
