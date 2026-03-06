@@ -1,4 +1,4 @@
-// src/routes/publicScheduleRoute.js
+// src/routes/publicScheduleRoute.js  v3 — rewrite
 const express = require('express');
 const router  = express.Router();
 const pool    = require('../config/database');
