@@ -113,8 +113,56 @@ const settingsRoutes = require('./routes/settingsRoutes');
 app.use('/api/settings',        settingsRoutes);
 const examRoutes = require('./routes/examRoutes');
 app.use('/api/exams',           examRoutes);
-const feedbackRoutes = require('./routes/feedbackRoutes');
-app.use('/api/feedback',        feedbackRoutes);
+// ── Feedback routes (safe load) ───────────────────────────────────────────
+let feedbackRoutes;
+try {
+  feedbackRoutes = require('./routes/feedbackRoutes');
+  app.use('/api/feedback', feedbackRoutes);
+  console.log('✅ Feedback routes loaded');
+} catch(e) {
+  console.warn('⚠️  feedbackRoutes not found, registering inline fallback');
+  // ── Inline fallback POST /api/feedback (public) ──────────────────────────
+  app.post('/api/feedback', async (req, res) => {
+    const { category, subject, message, anonymous, sender_name } = req.body;
+    if (!category || !subject || !message?.trim())
+      return res.status(400).json({ success: false, error: 'category, subject, message required' });
+    try {
+      const pool = require('./config/database');
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS feedback (
+          id SERIAL PRIMARY KEY, category TEXT NOT NULL, subject TEXT NOT NULL,
+          message TEXT NOT NULL, anonymous BOOLEAN NOT NULL DEFAULT true,
+          telegram_id TEXT, sender_name TEXT,
+          status TEXT NOT NULL DEFAULT 'new', created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      const isAnon = anonymous !== false;
+      const result = await pool.query(
+        `INSERT INTO feedback (category, subject, message, anonymous, sender_name)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [category, subject, message.trim(), isAnon, isAnon ? null : (sender_name || null)]
+      );
+      res.json({ success: true, data: result.rows[0] });
+    } catch(err) { res.status(500).json({ success: false, error: err.message }); }
+  });
+  // GET stats fallback
+  app.get('/api/feedback/stats', async (req, res) => {
+    try {
+      const pool = require('./config/database');
+      const total  = await pool.query('SELECT COUNT(*) FROM feedback');
+      const unread = await pool.query("SELECT COUNT(*) FROM feedback WHERE status='new'");
+      res.json({ success: true, total: parseInt(total.rows[0].count), unread: parseInt(unread.rows[0].count), byCategory: [], bySubject: [] });
+    } catch { res.json({ success: true, total: 0, unread: 0, byCategory: [], bySubject: [] }); }
+  });
+  // GET all fallback
+  app.get('/api/feedback', async (req, res) => {
+    try {
+      const pool = require('./config/database');
+      const r = await pool.query('SELECT * FROM feedback ORDER BY created_at DESC');
+      res.json({ success: true, data: r.rows });
+    } catch(err) { res.status(500).json({ success: false, error: err.message }); }
+  });
+}
 
 // ── Telegram webhook handler (dynamic — registered once bot is ready) ────────
 let _telegramWebhookMiddleware = null;
