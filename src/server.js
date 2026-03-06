@@ -164,6 +164,10 @@ try {
   });
 }
 
+// ── Claude AI proxy (keeps API key server-side) ───────────────────────────
+const claudeRoutes = require('./routes/claudeRoutes');
+app.use('/api/claude', claudeRoutes);
+
 // ── Public schedule pages (no auth) ───────────────────────────────────────
 const publicScheduleRoute = require('./routes/publicScheduleRoute');
 app.use('/schedule', publicScheduleRoute);
