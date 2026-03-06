@@ -265,21 +265,25 @@ router.get('/:group', async (req, res) => {
       <div class="tabs">${tabsHtml}</div>
       ${panelsHtml}
       <script>
+        function switchDay(day) {
+          document.querySelectorAll('.tab').forEach(function(b){ b.classList.remove('active'); });
+          document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('visible'); });
+          var panel = document.querySelector('.panel[data-day="' + day + '"]');
+          if (panel) panel.classList.add('visible');
+          var btn = document.querySelector('.tab[data-day="' + day + '"]');
+          if (btn) btn.classList.add('active');
+        }
+        // Wire up tabs
         document.querySelectorAll('.tab').forEach(function(btn) {
           btn.addEventListener('click', function() {
-            document.querySelectorAll('.tab').forEach(function(b){ b.classList.remove('active'); });
-            document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('visible'); });
-            btn.classList.add('active');
-            var day = btn.getAttribute('data-day');
-            var panel = document.querySelector('.panel[data-day="' + day + '"]');
-            if (panel) panel.classList.add('visible');
+            switchDay(btn.getAttribute('data-day'));
           });
         });
         // Auto-switch to today if available
         var dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
         var today = dayNames[new Date().getDay()];
         var todayBtn = document.querySelector('.tab[data-day="' + today + '"]');
-        if (todayBtn) todayBtn.click();
+        if (todayBtn) { switchDay(today); } 
       </script>`;
 
     res.send(page(groupName + ' Schedule', body));
