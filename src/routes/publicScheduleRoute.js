@@ -147,7 +147,7 @@ const shell = (title, bodyContent, extraHead = '') => `<!DOCTYPE html>
 router.get('/', async (req, res) => {
   try {
     const [groupsRes, schedRes] = await Promise.all([
-      pool.query('SELECT DISTINCT group_name FROM groups ORDER BY group_name'),
+      pool.query('SELECT name AS group_name FROM groups ORDER BY name'),
       pool.query('SELECT group_name, COUNT(*) as class_count FROM schedules GROUP BY group_name'),
     ]);
 
