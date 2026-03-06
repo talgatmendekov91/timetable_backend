@@ -204,6 +204,26 @@ router.get('/', async (req, res) => {
   }
 });
 
+// ── GET /schedule/debug/:group — raw JSON for debugging ──────────────────
+router.get('/debug/:group', async (req, res) => {
+  const groupName = decodeURIComponent(req.params.group);
+  try {
+    const result = await pool.query(
+      'SELECT day, time, course, teacher, room, subject_type, duration FROM schedules WHERE group_name = $1 ORDER BY day, time',
+      [groupName]
+    );
+    res.json({
+      group: groupName,
+      count: result.rows.length,
+      sample: result.rows.slice(0, 5),
+      days: [...new Set(result.rows.map(r => r.day))],
+      times: [...new Set(result.rows.map(r => r.time))].sort(),
+    });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
 // ── GET /schedule/:group — Group timetable ────────────────────────────────
 router.get('/:group', async (req, res) => {
   const groupName = decodeURIComponent(req.params.group);
@@ -236,6 +256,7 @@ router.get('/:group', async (req, res) => {
 
     // Find active days
     const activeDays = DAYS.filter(d => Object.keys(schedMap[d] || {}).length > 0);
+    console.log(`[PublicSchedule] ${groupName}: ${result.rows.length} rows, activeDays: ${JSON.stringify(activeDays)}, sampleDays: ${JSON.stringify([...new Set(result.rows.map(r=>r.day))])}`);
 
     // Render day tab content
     const dayTables = DAYS.map(day => {
