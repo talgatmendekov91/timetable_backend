@@ -71,16 +71,37 @@ router.post('/', async (req, res) => {
   const { category, subject, message, anonymous, telegram_id, sender_name, sender_email } = req.body;
   if (!category || !subject || !message?.trim())
     return res.status(400).json({ success: false, error: 'category, subject, message required' });
+
+  // Server-side validation — cannot be bypassed like frontend checks
+  const fromTelegram = !!telegram_id; // Telegram bot submissions have telegram_id
+  if (!fromTelegram) {
+    // Web form submissions must have name + valid university email
+    if (!sender_name || !sender_name.trim())
+      return res.status(400).json({ success: false, error: 'sender_name is required' });
+    if (!sender_email || !sender_email.trim().toLowerCase().endsWith('@alatoo.edu.kg'))
+      return res.status(400).json({ success: false, error: 'Email must end with @alatoo.edu.kg' });
+  }
+  if (message.trim().length < 5)
+    return res.status(400).json({ success: false, error: 'Message too short' });
+  if (!['room','teacher','group','general'].includes(category))
+    return res.status(400).json({ success: false, error: 'Invalid category' });
   try {
+    // Sanitize message — strip control characters that could break JSON or cause injection
+    const cleanMessage = message.trim()
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // control chars
+      .slice(0, 2000); // max length
+    const cleanName  = (sender_name  || '').trim().slice(0, 200);
+    const cleanEmail = (sender_email || '').trim().toLowerCase().slice(0, 200);
+
     const isAnon = anonymous !== false;
     const result = await pool.query(
       `INSERT INTO feedback (category, subject, message, anonymous, telegram_id, sender_name, sender_email)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [
-        category, subject, message.trim(), isAnon,
+        category, subject, cleanMessage, isAnon,
         isAnon ? null : (telegram_id || null),
-        isAnon ? null : (sender_name || null),
-        isAnon ? null : (sender_email || null),
+        isAnon ? null : (cleanName || null),
+        isAnon ? null : (cleanEmail || null),
       ]
     );
     res.json({ success: true, data: result.rows[0] });
