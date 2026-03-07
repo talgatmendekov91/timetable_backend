@@ -1,4 +1,5 @@
 // src/routes/examRoutes.js
+'use strict';
 const express = require('express');
 const router  = express.Router();
 const pool    = require('../config/database');
@@ -72,8 +73,21 @@ router.post('/', authenticateToken, async (req, res) => {
   if (!subject || !room || !exam_date || !start_time)
     return res.status(400).json({ success: false, error: 'subject, room, exam_date, start_time are required' });
 
+  // Validate time format — must be HH:MM or H:MM with valid range
+  const timeRegex = /^([01]?\d|2[0-3]):[0-5]\d$/;
+  if (!timeRegex.test(start_time))
+    return res.status(400).json({ success: false, error: 'Invalid start_time format. Use HH:MM (e.g. 09:00)' });
+
+  // Validate duration — must be a reasonable number (30–300 minutes)
+  const dur = parseInt(duration);
+  if (isNaN(dur) || dur < 30 || dur > 300)
+    return res.status(400).json({ success: false, error: 'Duration must be between 30 and 300 minutes' });
+
+  // Validate date format
+  if (isNaN(Date.parse(exam_date)))
+    return res.status(400).json({ success: false, error: 'Invalid exam_date' });
+
   try {
-    const dur = parseInt(duration) || 90;
     const newStart = toMins(start_time);
     const newEnd   = newStart + dur;
 
@@ -115,6 +129,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
   if (typeof group_names === 'string')     group_names = [group_names];
   if (!Array.isArray(group_names) || group_names.length === 0)
     return res.status(400).json({ success: false, error: 'At least one group is required' });
+
+  // Same validation as POST
+  const timeRegex = /^([01]?\d|2[0-3]):[0-5]\d$/;
+  if (start_time && !timeRegex.test(start_time))
+    return res.status(400).json({ success: false, error: 'Invalid start_time format. Use HH:MM (e.g. 09:00)' });
+  const durInt = parseInt(duration);
+  if (duration !== undefined && (isNaN(durInt) || durInt < 30 || durInt > 300))
+    return res.status(400).json({ success: false, error: 'Duration must be between 30 and 300 minutes' });
 
   try {
     const result = await pool.query(
