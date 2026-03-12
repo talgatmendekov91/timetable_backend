@@ -75,7 +75,19 @@ const setupDatabase = async () => {
     // Safe migrations for existing DBs
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(50) DEFAULT 'lecture'`);
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 1`);
-    await client.query(`ALTER TABLE schedules ALTER COLUMN subject_type TYPE VARCHAR(50)`);
+    // Force subject_type to VARCHAR(50) regardless of current size
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name='schedules' AND column_name='subject_type'
+          AND character_maximum_length < 50
+        ) THEN
+          ALTER TABLE schedules ALTER COLUMN subject_type TYPE VARCHAR(50);
+        END IF;
+      END $$;
+    `);
     console.log('✅ Schedules table ready!');
 
     // Create users table
