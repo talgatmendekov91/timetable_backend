@@ -85,6 +85,18 @@ app.get('/health', (req, res) => {
   });
 });
 
+// ── Run urgent migrations on startup ─────────────────────────────────────────
+(async () => {
+  try {
+    const pool = require('./config/database');
+    await pool.query(`ALTER TABLE schedules ALTER COLUMN time TYPE VARCHAR(20)`);
+    await pool.query(`ALTER TABLE schedules ALTER COLUMN subject_type TYPE VARCHAR(50)`);
+    console.log('✅ Column migrations applied');
+  } catch(e) {
+    console.warn('Migration warning (non-fatal):', e.message);
+  }
+})();
+
 // ── API routes ─────────────────────────────────────────────────────────────────
 app.use('/api/auth',             authRoutes);
 app.use('/api/schedules',        scheduleRoutes);
