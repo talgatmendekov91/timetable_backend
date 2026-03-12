@@ -270,4 +270,3 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
 
 module.exports = app;
-// Note: Exporting the app is useful for testing and for potential serverless deployments in the future
