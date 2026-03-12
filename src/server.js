@@ -5,30 +5,23 @@ const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
 require('dotenv').config();
 
-// ── Process-level crash guards ─────────────────────────────────────────────────
-// Without these, any unhandled promise rejection silently kills the Node process
-// causing 502 errors on Railway until the container restarts
 process.on('unhandledRejection', (reason, promise) => {
   console.error('⚠️  Unhandled Rejection at:', promise, 'reason:', reason);
-  // Do NOT exit — keep the server alive
 });
 process.on('uncaughtException', (err) => {
   console.error('⚠️  Uncaught Exception:', err);
-  // Do NOT exit for non-fatal errors
   if (err.code === 'ECONNRESET' || err.code === 'EPIPE') return;
-  // Fatal — must exit, but Railway will restart
   process.exit(1);
 });
 
-// ── Import routes ──────────────────────────────────────────────────────────────
 const authRoutes         = require('./routes/authRoutes');
 const scheduleRoutes     = require('./routes/scheduleRoutes');
 const bookingRoutes      = require('./routes/bookingRoutes');
 const teacherRoutes      = require('./routes/teacherRoutes');
 const groupChannelRoutes = require('./routes/groupChannelRoutes');
+const groupRoutes        = require('./routes/groupRoutes');        // ← NEW
 const broadcastRoutes    = require('./routes/broadcastRoutes');
 
-// ── Import Telegram service ────────────────────────────────────────────────────
 let startTelegramNotifications = null;
 try {
   const telegram = require('./services/telegramCron');
@@ -38,17 +31,12 @@ try {
   console.error('⚠️ Could not load Telegram modules:', error.message);
 }
 
-// ── Initialize express app ─────────────────────────────────────────────────────
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-// Trust proxy — important for rate limiting behind reverse proxy
 app.set('trust proxy', 1);
-
-// ── Security middleware ────────────────────────────────────────────────────────
 app.use(helmet());
 
-// ── CORS ───────────────────────────────────────────────────────────────────────
 app.use(cors({
   origin: true,
   credentials: true,
@@ -57,18 +45,15 @@ app.use(cors({
 }));
 app.options('*', cors());
 
-// ── Body parser — MUST be before routes ───────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// ── Logging ────────────────────────────────────────────────────────────────────
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 } else {
   app.use(morgan('combined'));
 }
 
-// ── Rate limiters ──────────────────────────────────────────────────────────────
 const bulkImportLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
@@ -91,7 +76,6 @@ const limiter = rateLimit({
 app.use('/api/schedules/bulk', bulkImportLimiter);
 app.use('/api/', limiter);
 
-// ── Health check ───────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -102,18 +86,20 @@ app.get('/health', (req, res) => {
 });
 
 // ── API routes ─────────────────────────────────────────────────────────────────
-app.use('/api/auth',            authRoutes);
-app.use('/api/schedules',       scheduleRoutes);
-app.use('/api/booking-requests',bookingRoutes);
-app.use('/api/teachers',        teacherRoutes);
-app.use('/api/group-channels',  groupChannelRoutes);
-app.use('/api/groups',          groupChannelRoutes);  // legacy route App.js needs
-app.use('/api/broadcast',       broadcastRoutes);
+app.use('/api/auth',             authRoutes);
+app.use('/api/schedules',        scheduleRoutes);
+app.use('/api/booking-requests', bookingRoutes);
+app.use('/api/teachers',         teacherRoutes);
+app.use('/api/groups',           groupRoutes);           // ← plain string array
+app.use('/api/group-channels',   groupChannelRoutes);    // ← {group_name, chat_id}
+app.use('/api/broadcast',        broadcastRoutes);
+
 const settingsRoutes = require('./routes/settingsRoutes');
-app.use('/api/settings',        settingsRoutes);
+app.use('/api/settings', settingsRoutes);
+
 const examRoutes = require('./routes/examRoutes');
-app.use('/api/exams',           examRoutes);
-// ── Feedback routes (safe load) ───────────────────────────────────────────
+app.use('/api/exams', examRoutes);
+
 let feedbackRoutes;
 try {
   feedbackRoutes = require('./routes/feedbackRoutes');
@@ -121,7 +107,6 @@ try {
   console.log('✅ Feedback routes loaded');
 } catch(e) {
   console.warn('⚠️  feedbackRoutes not found, registering inline fallback');
-  // ── Inline fallback POST /api/feedback (public) ──────────────────────────
   app.post('/api/feedback', async (req, res) => {
     const { category, subject, message, anonymous, sender_name } = req.body;
     if (!category || !subject || !message?.trim())
@@ -145,7 +130,6 @@ try {
       res.json({ success: true, data: result.rows[0] });
     } catch(err) { res.status(500).json({ success: false, error: err.message }); }
   });
-  // GET stats fallback
   app.get('/api/feedback/stats', async (req, res) => {
     try {
       const pool = require('./config/database');
@@ -154,7 +138,6 @@ try {
       res.json({ success: true, total: parseInt(total.rows[0].count), unread: parseInt(unread.rows[0].count), byCategory: [], bySubject: [] });
     } catch { res.json({ success: true, total: 0, unread: 0, byCategory: [], bySubject: [] }); }
   });
-  // GET all fallback
   app.get('/api/feedback', async (req, res) => {
     try {
       const pool = require('./config/database');
@@ -164,15 +147,12 @@ try {
   });
 }
 
-// ── Claude AI proxy (keeps API key server-side) ───────────────────────────
 const claudeRoutes = require('./routes/claudeRoutes');
 app.use('/api/claude', claudeRoutes);
 
-// ── Public schedule pages (no auth) ───────────────────────────────────────
 const publicScheduleRoute = require('./routes/publicScheduleRoute');
 app.use('/schedule', publicScheduleRoute);
 
-// ── Telegram webhook handler (dynamic — registered once bot is ready) ────────
 let _telegramWebhookMiddleware = null;
 let _telegramWebhookPath       = null;
 app.use((req, res, next) => {
@@ -181,19 +161,16 @@ app.use((req, res, next) => {
   }
   next();
 });
-// Called by server startup once bot initializes
 app.setTelegramWebhook = (path, middleware) => {
   _telegramWebhookPath       = path;
   _telegramWebhookMiddleware = middleware;
   console.log(`✅ Telegram webhook route active: ${path}`);
 };
 
-// ── 404 handler ────────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Route not found' });
 });
 
-// ── Error handler ──────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({
@@ -202,32 +179,21 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ── Start server ───────────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════╗
-║                                                       ║
-║   🎓 University Schedule Backend API                 ║
-║                                                       ║
-║   Server running on port: ${PORT}                        ║
-║   Environment: ${process.env.NODE_ENV || 'development'}                      ║
-║   CORS: Enabled (all origins)                        ║
-║   Rate limit: 2000 req / 15 min (general)            ║
-║   Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? '✅ Configured' : '❌ Not configured'}                ║
-║                                                       ║
-║   Health Check: http://localhost:${PORT}/health         ║
-║   API Base URL: http://localhost:${PORT}/api            ║
-║                                                       ║
+║   🎓 University Schedule Backend API                  ║
+║   Port: ${PORT}  |  Env: ${process.env.NODE_ENV || 'development'}                    ║
+║   CORS: Enabled  |  Rate limit: 2000/15min            ║
+║   Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? '✅ Configured' : '❌ Not configured'}                     ║
 ╚═══════════════════════════════════════════════════════╝
   `);
 
-  // Start Telegram notifications — fully isolated, never crashes the server
   if (startTelegramNotifications) {
     console.log('🔄 Initializing Telegram service...');
     setTimeout(() => {
       try {
         startTelegramNotifications();
-        // Register webhook route if bot is in webhook mode
         try {
           const { getNotifier } = require('./services/telegramCron');
           setTimeout(() => {
@@ -246,24 +212,14 @@ const server = app.listen(PORT, () => {
   }
 });
 
-// ── Graceful shutdown ──────────────────────────────────────────────────────────
 const shutdown = (signal) => {
   console.log(`${signal} received: closing HTTP server`);
-  // Stop Telegraf bot polling FIRST to avoid 409 conflict on redeploy
   try {
     const notifier = require('./services/telegramNotifier');
     const instance = notifier.getInstance ? notifier.getInstance() : null;
-    if (instance?.bot) {
-      instance.bot.stop(signal);
-      console.log('Telegram bot stopped');
-    }
-  } catch(e) { /* bot may not be running */ }
-
-  server.close(() => {
-    console.log('HTTP server closed');
-    process.exit(0);
-  });
-  // Force exit after 5s if server hangs
+    if (instance?.bot) { instance.bot.stop(signal); console.log('Telegram bot stopped'); }
+  } catch(e) { }
+  server.close(() => { console.log('HTTP server closed'); process.exit(0); });
   setTimeout(() => process.exit(1), 5000);
 };
 process.on('SIGTERM', () => shutdown('SIGTERM'));
