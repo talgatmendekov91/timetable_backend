@@ -6,20 +6,14 @@ const fs = require('fs');
 const path = require('path');
 
 const getPoolConfig = () => {
-  if (process.env.DATABASE_URL) {
-    console.log('🔗 Using DATABASE_URL');
-    return {
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false }
-    };
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) {
+    throw new Error('DATABASE_URL environment variable is required. Please set it in Railway Variables.');
   }
-  console.log('🔡 Using individual DB variables');
+  console.log('🔗 Using DATABASE_URL');
   return {
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT) || 5432,
-    database: process.env.DB_NAME || 'university_schedule',
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD,
+    connectionString: dbUrl,
+    ssl: { rejectUnauthorized: false }
   };
 };
 
@@ -74,18 +68,15 @@ const setupDatabase = async () => {
         FOREIGN KEY (group_name) REFERENCES groups(name) ON DELETE CASCADE
       )`);
 
-    // Create indexes for schedules
     await client.query(`CREATE INDEX IF NOT EXISTS idx_day ON schedules(day)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher ON schedules(teacher)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_group ON schedules(group_name)`);
 
-    // Add columns if they don't exist (safe for existing DBs)
+    // Safe migrations for existing DBs
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(50) DEFAULT 'lecture'`);
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 1`);
-
-    // Fix subject_type length in case it was created as VARCHAR(10) or VARCHAR(20)
     await client.query(`ALTER TABLE schedules ALTER COLUMN subject_type TYPE VARCHAR(50)`);
-    console.log('✅ Schedules table and indexes ready!');
+    console.log('✅ Schedules table ready!');
 
     // Create users table
     await client.query(`
@@ -160,33 +151,31 @@ const setupDatabase = async () => {
     // Create feedback table
     await client.query(`
       CREATE TABLE IF NOT EXISTS feedback (
-        id          SERIAL PRIMARY KEY,
-        category    VARCHAR(20) NOT NULL DEFAULT 'general',
-        subject     VARCHAR(100),
-        message     TEXT NOT NULL,
-        sender_name VARCHAR(100),
+        id           SERIAL PRIMARY KEY,
+        category     VARCHAR(20) NOT NULL DEFAULT 'general',
+        subject      VARCHAR(100),
+        message      TEXT NOT NULL,
+        sender_name  VARCHAR(100),
         sender_email VARCHAR(100),
-        status      VARCHAR(20) DEFAULT 'unread',
-        created_at  TIMESTAMPTZ DEFAULT NOW(),
-        updated_at  TIMESTAMPTZ DEFAULT NOW()
+        status       VARCHAR(20) DEFAULT 'unread',
+        created_at   TIMESTAMPTZ DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ DEFAULT NOW()
       )`);
     console.log('✅ Feedback table ready!');
 
     // Auto-populate teachers from schedule
-    console.log('🔄 Auto-populating teachers from schedule...');
     await client.query(`
       INSERT INTO teachers (name, notifications_enabled)
-      SELECT DISTINCT LOWER(teacher) as name, true
+      SELECT DISTINCT LOWER(teacher), true
       FROM schedules
-      WHERE teacher IS NOT NULL
-        AND teacher != ''
+      WHERE teacher IS NOT NULL AND teacher != ''
         AND LOWER(teacher) NOT IN (SELECT LOWER(name) FROM teachers)
       ON CONFLICT (name) DO NOTHING`);
     const teacherCount = await client.query('SELECT COUNT(*) FROM teachers');
     console.log(`✅ ${teacherCount.rows[0].count} teachers in database`);
 
     // Create admin user
-    const adminCheck = await client.query("SELECT * FROM users WHERE username = 'admin'");
+    const adminCheck = await client.query("SELECT id FROM users WHERE username = 'admin'");
     if (adminCheck.rows.length === 0) {
       const hashedPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'admin123', 10);
       await client.query(
@@ -218,16 +207,14 @@ const setupDatabase = async () => {
     console.log(`✅ ${groups.length} groups ready!`);
 
     console.log('🚀 Starting Express server...');
-    const app = require('../src/server');
+    require('../src/server');
     console.log('✅ Server started successfully!');
-    console.log('🤖 Telegram bot should now be initializing...');
 
   } catch (error) {
     console.error('❌ Setup failed:');
     console.error('Error name:', error.name);
     console.error('Error message:', error.message);
     console.error('Error code:', error.code);
-    console.error('Error detail:', error.detail);
     console.error('Full error:', error);
     console.error('Stack trace:', error.stack);
     process.exit(1);
