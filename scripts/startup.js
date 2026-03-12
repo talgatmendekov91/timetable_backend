@@ -73,6 +73,9 @@ const setupDatabase = async () => {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_group ON schedules(group_name)`);
 
     // Safe migrations for existing DBs
+    // Fix column sizes for longer time formats (e.g. '08:00 - 8:40') and subject types
+    await client.query(`ALTER TABLE schedules ALTER COLUMN time TYPE VARCHAR(20)`);
+    await client.query(`ALTER TABLE schedules ALTER COLUMN subject_type TYPE VARCHAR(50)`);
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(50) DEFAULT 'lecture'`);
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 1`);
     // Force subject_type to VARCHAR(50) regardless of current size
