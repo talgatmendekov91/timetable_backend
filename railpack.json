@@ -1,0 +1,9 @@
+{
+  "provider": "node",
+  "build": {
+    "install": "npm ci"
+  },
+  "deploy": {
+    "startCommand": "node scripts/startup.js"
+  }
+}

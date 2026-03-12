@@ -1,4 +1,4 @@
-// scripts/startup.js - WITH PROPER TELEGRAM INITIALIZATION
+// scripts/startup.js
 require('dotenv').config();
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
@@ -66,7 +66,7 @@ const setupDatabase = async () => {
         course VARCHAR(100) NOT NULL,
         teacher VARCHAR(100),
         room VARCHAR(50),
-        subject_type VARCHAR(20) DEFAULT 'lecture',
+        subject_type VARCHAR(50) DEFAULT 'lecture',
         duration INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -79,9 +79,12 @@ const setupDatabase = async () => {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher ON schedules(teacher)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_group ON schedules(group_name)`);
 
-    // Add columns if they don't exist
-    await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(20) DEFAULT 'lecture'`);
+    // Add columns if they don't exist (safe for existing DBs)
+    await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS subject_type VARCHAR(50) DEFAULT 'lecture'`);
     await client.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS duration INTEGER DEFAULT 1`);
+
+    // Fix subject_type length in case it was created as VARCHAR(10) or VARCHAR(20)
+    await client.query(`ALTER TABLE schedules ALTER COLUMN subject_type TYPE VARCHAR(50)`);
     console.log('✅ Schedules table and indexes ready!');
 
     // Create users table
@@ -107,22 +110,67 @@ const setupDatabase = async () => {
         notifications_enabled BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+      )`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher_telegram ON teachers(telegram_id)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_teacher_name ON teachers(LOWER(name))`);
     console.log('✅ Teachers table ready!');
 
-    // ── group_channels table ─────────────────────────────────────────────────
+    // Create group_channels table
     await client.query(`
       CREATE TABLE IF NOT EXISTS group_channels (
         group_name  TEXT PRIMARY KEY,
         chat_id     TEXT,
         created_at  TIMESTAMPTZ DEFAULT NOW(),
         updated_at  TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
+      )`);
     console.log('✅ Group channels table ready!');
+
+    // Create settings table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key   VARCHAR(100) PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+    await client.query(`
+      INSERT INTO settings (key, value)
+      VALUES ('show_exams_to_guests', 'false')
+      ON CONFLICT (key) DO NOTHING`);
+    console.log('✅ Settings table ready!');
+
+    // Create exams table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS exams (
+        id          SERIAL PRIMARY KEY,
+        group_names TEXT[] NOT NULL DEFAULT '{}',
+        subject     VARCHAR(100) NOT NULL,
+        teacher     VARCHAR(100),
+        room        VARCHAR(50) NOT NULL,
+        exam_date   DATE NOT NULL,
+        start_time  VARCHAR(10) NOT NULL,
+        duration    INTEGER NOT NULL DEFAULT 90,
+        notes       TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      )`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_exam_date ON exams(exam_date)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_exam_room ON exams(room)`);
+    console.log('✅ Exams table ready!');
+
+    // Create feedback table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS feedback (
+        id          SERIAL PRIMARY KEY,
+        category    VARCHAR(20) NOT NULL DEFAULT 'general',
+        subject     VARCHAR(100),
+        message     TEXT NOT NULL,
+        sender_name VARCHAR(100),
+        sender_email VARCHAR(100),
+        status      VARCHAR(20) DEFAULT 'unread',
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      )`);
+    console.log('✅ Feedback table ready!');
 
     // Auto-populate teachers from schedule
     console.log('🔄 Auto-populating teachers from schedule...');
@@ -133,8 +181,7 @@ const setupDatabase = async () => {
       WHERE teacher IS NOT NULL
         AND teacher != ''
         AND LOWER(teacher) NOT IN (SELECT LOWER(name) FROM teachers)
-      ON CONFLICT (name) DO NOTHING
-    `);
+      ON CONFLICT (name) DO NOTHING`);
     const teacherCount = await client.query('SELECT COUNT(*) FROM teachers');
     console.log(`✅ ${teacherCount.rows[0].count} teachers in database`);
 
@@ -187,7 +234,6 @@ const setupDatabase = async () => {
   }
 };
 
-// Run setup
 setupDatabase().catch(err => {
   console.error('Fatal error:', err);
   process.exit(1);
